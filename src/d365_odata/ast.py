@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, Tuple
 
 class Expr(Protocol):
     """
@@ -24,17 +24,37 @@ class Literal:
     """
     value: Any
 
-# Logical predicates
+
 @dataclass(frozen=True)
 class And:
-    left: Expr
-    right: Expr
+    terms: Tuple[Expr, ...]
+    """All terms must be true (n-ary AND)."""
+
+    def __init__(self, *terms: Expr):
+        # Normalize: And(a, And(b,c), d) -> And(a,b,c,d)
+        flat: list[Expr] = []
+        for t in terms:
+            if isinstance(t, And):
+                flat.extend(t.terms)
+            else:
+                flat.append(t)
+        object.__setattr__(self, "terms", tuple(flat))
 
 
 @dataclass(frozen=True)
 class Or:
-    left: Expr
-    right: Expr
+    terms: Tuple[Expr, ...]
+    """At least one term must be true (n-ary OR)."""
+
+    def __init__(self, *terms: Expr):
+        # Normalize: Or(a, Or(b,c), d) -> Or(a,b,c,d)
+        flat: list[Expr] = []
+        for t in terms:
+            if isinstance(t, Or):
+                flat.extend(t.terms)
+            else:
+                flat.append(t)
+        object.__setattr__(self, "terms", tuple(flat))
 
 
 @dataclass(frozen=True)

@@ -46,8 +46,14 @@ def validate_expr(expr: Expr, entity_type: EntityType) -> None:
     if isinstance(expr, Literal):
         return
 
+    # Handle n-tuple And/Or
+    if isinstance(expr, And) or isinstance(expr, Or):
+        for t in expr.terms:
+            validate_expr(t, entity_type)
+        return
+
     # Binary nodes
-    for bin_type in (And, Or, Eq, Ne, Gt, Ge, Lt, Le, Contains, StartsWith, EndsWith):
+    for bin_type in (Eq, Ne, Gt, Ge, Lt, Le, Contains, StartsWith, EndsWith):
         if isinstance(expr, bin_type):
             validate_expr(expr.left, entity_type)     # type: ignore[attr-defined]
             validate_expr(expr.right, entity_type)    # type: ignore[attr-defined]

@@ -21,9 +21,11 @@ def compile_expr(expr: Expr) -> str:
         return compile_literal(expr.value)
 
     if isinstance(expr, And):
-        return f"({compile_expr(expr.left)} and {compile_expr(expr.right)})"
+        inner = " and ".join(compile_expr(t) for t in expr.terms)
+        return f"({inner})"
     if isinstance(expr, Or):
-        return f"({compile_expr(expr.left)} or {compile_expr(expr.right)})"
+        inner = " or ".join(compile_expr(t) for t in expr.terms)
+        return f"({inner})"
     if isinstance(expr, Not):
         return f"(not {compile_expr(expr.expr)})"
 

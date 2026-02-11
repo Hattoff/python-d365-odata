@@ -80,12 +80,20 @@ class ODataQuery:
                 self._select.append(f)
         return self
 
-    def where(self, expr: Expr) -> "ODataQuery":
-        self._filter = expr if self._filter is None else And(self._filter, expr)
+    def where(self, *exprs: Expr) -> "ODataQuery":
+        if not exprs:
+            return self
+
+        incoming = And(*exprs) if len(exprs) > 1 else exprs[0]
+        self._filter = incoming if self._filter is None else And(self._filter, incoming)
         return self
 
-    def or_where(self, expr: Expr) -> "ODataQuery":
-        self._filter = expr if self._filter is None else Or(self._filter, expr)
+    def or_where(self, *exprs: Expr) -> "ODataQuery":
+        if not exprs:
+            return self
+
+        incoming = Or(*exprs) if len(exprs) > 1 else exprs[0]
+        self._filter = incoming if self._filter is None else Or(self._filter, incoming)
         return self
 
     def count(self, enabled: bool = True) -> "ODataQuery":
