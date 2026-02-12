@@ -7,7 +7,7 @@ from .types import OrderByItem
 from .ast import Expr, And, Or
 from .compiler import compile_expr, compile_orderby
 from .validator import validate_query, validate_expr, validate_orderby
-from .flatten import flatten_fields, flatten_orderby
+from .flatten import flatten_fields, flatten_orderby, flatten_exprs
 from .target import FromTarget, EntityDefinitionsTarget, _is_guid
 
 # ------- Query builder -------- #
@@ -80,19 +80,21 @@ class ODataQuery:
                 self._select.append(f)
         return self
 
-    def where(self, *exprs: Expr) -> "ODataQuery":
+    def where(self, *items: Any) -> "ODataQuery":
+        exprs = flatten_exprs(*items)
         if not exprs:
             return self
 
-        incoming = And(*exprs) if len(exprs) > 1 else exprs[0]
+        incoming: Expr = And(*exprs) if len(exprs) > 1 else exprs[0]
         self._filter = incoming if self._filter is None else And(self._filter, incoming)
         return self
 
-    def or_where(self, *exprs: Expr) -> "ODataQuery":
+    def or_where(self, *items: Any) -> "ODataQuery":
+        exprs = flatten_exprs(*items)
         if not exprs:
             return self
 
-        incoming = Or(*exprs) if len(exprs) > 1 else exprs[0]
+        incoming: Expr = Or(*exprs) if len(exprs) > 1 else exprs[0]
         self._filter = incoming if self._filter is None else Or(self._filter, incoming)
         return self
 

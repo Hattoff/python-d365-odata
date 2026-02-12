@@ -3,7 +3,52 @@ from typing import Any, List
 from collections.abc import Iterable as IterableABC
 from .types import OrderByItem
 
-# ------- Select and Order-By input helpers -------- #
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .ast import Expr
+
+
+# ------- Expresion, Select, and Order-By input helpers -------- #
+
+def flatten_exprs(*items: Any) -> List[Expr]:
+    """
+    Accepts Expr objects and iterables of Expr (nested allowed) and returns a flat list.
+
+    Examples:
+      flatten_exprs(expr1, [expr2, expr3], (expr4, [expr5]))
+    
+    :param items: Any assortment of Expressions, Lists, Sets, or other iterable containers
+    :type items: Any
+    :return: A flattened list of expressions
+    :rtype: List[Expr]
+    """
+    out: List[Expr] = []
+
+    def walk(x: Any) -> None:
+        if x is None:
+            return
+
+        # Strings are not valid here
+        if isinstance(x, str):
+            raise TypeError("Expected Expr or iterable[Expr], got str")
+
+        if not isinstance(x, IterableABC):
+            out.append(x)  # type: ignore[list-item]
+            return
+
+        # Iterables: recurse
+        # Stabilize sets
+        if isinstance(x, set):
+            for y in sorted(x, key=repr):
+                walk(y)
+        else:
+            for y in x:
+                walk(y)
+
+    for item in items:
+        walk(item)
+
+    return out
 
 def flatten_fields(*items: Any) -> List[str]:
         """

@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol, Tuple
+from .flatten import flatten_exprs
 
 class Expr(Protocol):
     """
@@ -27,13 +28,13 @@ class Literal:
 
 @dataclass(frozen=True)
 class And:
-    terms: Tuple[Expr, ...]
-    """All terms must be true (n-ary AND)."""
+    terms: Tuple[Any, ...]
+    """Terms can be AND Expressions or any iterable combination of them."""
 
-    def __init__(self, *terms: Expr):
+    def __init__(self, *terms: Any):
         # Normalize: And(a, And(b,c), d) -> And(a,b,c,d)
-        flat: list[Expr] = []
-        for t in terms:
+        flat = []
+        for t in flatten_exprs(*terms):
             if isinstance(t, And):
                 flat.extend(t.terms)
             else:
@@ -43,13 +44,13 @@ class And:
 
 @dataclass(frozen=True)
 class Or:
-    terms: Tuple[Expr, ...]
-    """At least one term must be true (n-ary OR)."""
+    terms: Tuple[Any, ...]
+    """Terms can be OR Expressions or any iterable combination of them."""
 
-    def __init__(self, *terms: Expr):
+    def __init__(self, *terms: Any):
         # Normalize: Or(a, Or(b,c), d) -> Or(a,b,c,d)
-        flat: list[Expr] = []
-        for t in terms:
+        flat = []
+        for t in flatten_exprs(*terms):
             if isinstance(t, Or):
                 flat.extend(t.terms)
             else:

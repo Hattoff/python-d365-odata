@@ -26,6 +26,7 @@ def compile_expr(expr: Expr) -> str:
     if isinstance(expr, Or):
         inner = " or ".join(compile_expr(t) for t in expr.terms)
         return f"({inner})"
+    
     if isinstance(expr, Not):
         return f"(not {compile_expr(expr.expr)})"
 
