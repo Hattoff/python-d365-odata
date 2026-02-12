@@ -51,45 +51,49 @@ def flatten_exprs(*items: Any) -> List[Expr]:
     return out
 
 def flatten_fields(*items: Any) -> List[str]:
-        """
-        Accepts strings and iterables of strings (including nested),
-        returns a deduped list of field names.
-        """
-        out: List[str] = []
-        seen: set[str] = set()
+    """
+    Accepts strings and iterables of strings (including nested),
+    
+    :param items: Description
+    :type items: Any
+    :return: A deduped list of field names.
+    :rtype: List[str]
+    """
+    out: List[str] = []
+    seen: set[str] = set()
 
-        def add_one(s: str) -> None:
-            s2 = s.strip()
-            if not s2:
-                return
-            if s2 not in seen:
-                seen.add(s2)
-                out.append(s2)
+    def add_one(s: str) -> None:
+        s2 = s.strip()
+        if not s2:
+            return
+        if s2 not in seen:
+            seen.add(s2)
+            out.append(s2)
 
-        def walk(x: Any) -> None:
-            if x is None:
-                return
-            # Strings are iterable, but we want to treat them as atomic.
-            if isinstance(x, str):
-                add_one(x)
-                return
-            # Walk sets to preserve order
-            if isinstance(x, set):
-                for y in sorted(x):
-                    walk(y)
-                return
-            # Treat other iterables (lists, tuples, generators, etc.) as collections of fields.
-            if isinstance(x, IterableABC):
-                for y in x:
-                    walk(y)
-                return
-            # Anything else is a usage error.
-            raise TypeError(f"select() expected str or iterable[str], got {type(x).__name__}: {x!r}")
+    def walk(x: Any) -> None:
+        if x is None:
+            return
+        # Strings are iterable, but we want to treat them as atomic.
+        if isinstance(x, str):
+            add_one(x)
+            return
+        # Walk sets to preserve order
+        if isinstance(x, set):
+            for y in sorted(x):
+                walk(y)
+            return
+        # Treat other iterables (lists, tuples, generators, etc.) as collections of fields.
+        if isinstance(x, IterableABC):
+            for y in x:
+                walk(y)
+            return
+        # Anything else is a usage error.
+        raise TypeError(f"select() expected str or iterable[str], got {type(x).__name__}: {x!r}")
 
-        for item in items:
-            walk(item)
+    for item in items:
+        walk(item)
 
-        return out
+    return out
     
 def flatten_orderby(*items: Any) -> List[OrderByItem]:
     """
@@ -145,7 +149,7 @@ def flatten_orderby(*items: Any) -> List[OrderByItem]:
                 return
             raise ValueError(f"Invalid orderby tuple: {x!r} (second item must be bool or 'asc'/'desc')")
 
-        # Other iterables: recurse
+        # Other iterables
         if isinstance(x, IterableABC):
             # stabilize set ordering
             if isinstance(x, set):
