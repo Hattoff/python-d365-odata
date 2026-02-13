@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 import xml.etree.ElementTree as ET
 import json
+from .types import FunctionDef, FunctionParam
 
 import logging
 logger = logging.getLogger(__name__)
@@ -20,6 +21,7 @@ class EntityType:
 class ServiceMetadata:
     entity_sets: Dict[str, str]          # entity_set -> entity_type_name
     entity_types: Dict[str, EntityType]  # entity_type_name -> EntityType
+    functions: Dict[str, FunctionDef] = None    # api_name -> FunctionDef (or name -> FunctionDef)
 
     def entity_type_for_set(self, entity_set: str) -> EntityType:
         if entity_set not in self.entity_sets:
@@ -28,6 +30,53 @@ class ServiceMetadata:
         if et_name not in self.entity_types:
             raise KeyError(f"Entity type not found for set '{entity_set}': {et_name}")
         return self.entity_types[et_name]
+    
+    def function_for_api(self, api_name: str) -> FunctionDef:
+        if not self.functions or api_name not in self.functions:
+            raise KeyError(f"Unknown function: {api_name}")
+        return self.functions[api_name]
+    
+
+def service_metadata_from_parsed_edmx(parsed: list[dict]) -> ServiceMetadata:
+    # for now just go with the default schema
+    schema = parsed[0]
+
+    entity_sets = {}
+    entity_types = {}
+
+    # entity_sets: from entities[*].entity_set_name
+    for ename, e in schema["entities"].items():
+        if e.get("entity_set_name"):
+            entity_sets[e["entity_set_name"]] = ename
+            
+        props = {pname: pinfo["type"] for pname, pinfo in e["attributes"].items()}
+        entity_types[ename] = EntityType(name=ename, properties=props)
+
+    functions = {}
+    for fname, f in schema["functions"].items():
+        api_name = f["api_name"] or fname
+        params = {
+            pn: FunctionParam(
+                name=pn,
+                edm_type=p["type"],
+                is_optional=p["is_optional"],
+            )
+            for pn, p in f["parameters"].items()
+        }
+        functions[api_name] = FunctionDef(
+            name=fname,
+            api_name=api_name,
+            params=params,
+            returns=bool(f["returns"]),
+            return_type=f["return_type"],
+        )
+
+    return ServiceMetadata(
+        entity_sets=entity_sets,
+        entity_types=entity_types,
+        functions=functions,
+    )
+
     
 # ------- Parse Metadata -------- #
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Optional, FrozenSet, Protocol, ClassVar
+from typing import Optional, FrozenSet, Protocol, ClassVar, Mapping, Any
 from .utilities import _normalize_guid, _is_guid
 from .types import QueryPart
 
@@ -28,6 +28,30 @@ class BaseTarget:
     def to_path(self) -> str:
         raise NotImplementedError
 
+@dataclass(frozen=True)
+class FunctionTarget(BaseTarget):
+    api_name: str
+    params: Mapping[str, Any]
+    """raw values that the validator can check"""
+
+    @staticmethod
+    def create(api_name: str, **params: Any) -> "FunctionTarget":
+        return FunctionTarget(
+            allowed_parts=frozenset({
+                QueryPart.SELECT, QueryPart.FILTER, QueryPart.ORDERBY,
+                QueryPart.SKIP, QueryPart.TOP, QueryPart.COUNT, QueryPart.EXPAND
+            }),
+            api_name=api_name,
+            params=params,
+        )
+
+    def to_path(self) -> str:
+        # OData function invocation style: /FunctionName(p1=v1,p2=v2)
+        # For now: render naive; validator/compiler later can handle correct quoting.
+        if not self.params:
+            return f"/{self.api_name}()"
+        inner = ",".join(f"{k}={v}" for k, v in self.params.items())
+        return f"/{self.api_name}({inner})"
 
 @dataclass(frozen=True)
 class FromTarget(BaseTarget):

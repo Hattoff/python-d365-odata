@@ -18,7 +18,7 @@ class ExpandQuery:
     _orderby: List[OrderByItem] = field(default_factory=list)
     _skip: Optional[int] = None
     _top: Optional[int] = None
-    _expand: List["ExpandItem"] = field(default_factory=list)
+    _expand: List[ExpandItem] = field(default_factory=list)
 
     # ------- Select -------- #
     def select_(self, *fields: str) -> "ExpandQuery":

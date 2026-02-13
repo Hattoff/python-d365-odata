@@ -7,9 +7,9 @@ from .types import OrderByItem, QueryPart
 from .expand import ExpandItem, ExpandQuery
 from .ast import Expr, And, Or
 from .compiler import compile_expr, compile_orderby, compile_expand
-from .validator import validate_query
+from .validator import validate_query, validate_target, FunctionParamsBuilder
 from .flatten import flatten_fields, flatten_orderby, flatten_exprs
-from .targets import Target, FromTarget, EntityDefinitionsTarget, MetadataTarget, WhoAmITarget
+from .targets import Target, FromTarget, EntityDefinitionsTarget, MetadataTarget, WhoAmITarget, FunctionTarget
 
 # ------- Query builder -------- #
 
@@ -39,6 +39,12 @@ class ODataQuery:
         if metadata is not None:
             self._metadata = metadata
         self._target = FromTarget.create(entity_set=entity_set, id=id)
+        return self
+
+    def function_(self, api_name: str, metadata: Optional[ServiceMetadata] = None, **params: Any) -> "ODataQuery":
+        if metadata is not None:
+            self._metadata = metadata
+        self._target = FunctionTarget.create(api_name, **params)
         return self
 
     def entitydefinitions_(
@@ -126,6 +132,16 @@ class ODataQuery:
         self._expand.append(ExpandItem(nav=nav, query=query))
         return self
     
+
+    @property
+    def params_(self) -> FunctionParamsBuilder:
+        if not isinstance(self._target, FunctionTarget):
+            raise AttributeError("params is only available for FunctionTarget queries")
+        if not self._metadata:
+            raise AttributeError("params requires metadata to provide hints")
+        fn = self._metadata.function_for_api(self._target.api_name)
+        return FunctionParamsBuilder(self, fn)
+
     @property
     def _present_parts(self) -> set[QueryPart]:
         present: set[QueryPart] = set()
@@ -170,8 +186,7 @@ class ODataQuery:
         self._enforce_allowed_parts(self._target)
 
         if validate:
-            et = self._metadata.entity_type_for_set(self._target.get("entity_set"))
-            validate_query(self, et)
+            validate_target(self, self._metadata)
 
         parts = []
         if self._select:
