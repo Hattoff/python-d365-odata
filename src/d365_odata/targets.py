@@ -52,33 +52,13 @@ class FromTarget(BaseTarget):
         if self.id:
             return f"/{self.entity_set}({_normalize_guid(self.id)})"
         return f"/{self.entity_set}"
-    
-@dataclass(frozen=True)
-class ExpandTarget(BaseTarget):
-    entity_set: str
-    id: Optional[str] = None
-    """guid string, no quotes in URL"""
-
-    @staticmethod
-    def create(entity_set: str, id: Optional[str] = None) -> "FromTarget":
-        if id is not None and not _is_guid(id):
-            raise ValueError(f"Invalid GUID for entity id: {id!r}")
-        return FromTarget(
-            allowed_parts=frozenset({
-                QueryPart.SELECT, QueryPart.FILTER, QueryPart.ORDERBY,
-                QueryPart.SKIP, QueryPart.TOP, QueryPart.COUNT
-            }),
-            entity_set=entity_set,
-            id=id,
-        )
-
-    def to_path(self) -> str:
-        if self.id:
-            return f"/{self.entity_set}({_normalize_guid(self.id)})"
-        return f"/{self.entity_set}"
 
 @dataclass(frozen=True)
 class EntityDefinitionsTarget(BaseTarget):
+    """
+    Hard-coded to allow for fetching of system data necessary for metadata construction.
+    Query the EntityMetadata entity exposed by this EntitySet.
+    """
     logical_name: Optional[str] = None
     id: Optional[str] = None
     """guid string, no quotes in URL"""
@@ -109,6 +89,10 @@ class EntityDefinitionsTarget(BaseTarget):
 
 @dataclass(frozen=True)
 class MetadataTarget(BaseTarget):
+    """
+    Hard-coded to allow for fetching of system data necessary for metadata construction.
+    Query the $Metadata endpoint for Edmx (XML) document.
+    """
     @staticmethod
     def create() -> "MetadataTarget":
         return MetadataTarget(
@@ -120,6 +104,9 @@ class MetadataTarget(BaseTarget):
     
 @dataclass(frozen=True)
 class WhoAmITarget(BaseTarget):
+    """
+    Hard-coded to allow for endpoint testing before metadata construction.
+    """
     @staticmethod
     def create() -> "WhoAmITarget":
         return WhoAmITarget(

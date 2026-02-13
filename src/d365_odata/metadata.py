@@ -10,7 +10,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 # ------- Metadata Classes -------- #
-
 @dataclass(frozen=True)
 class EntityType:
     name: str
@@ -30,25 +29,10 @@ class ServiceMetadata:
             raise KeyError(f"Entity type not found for set '{entity_set}': {et_name}")
         return self.entity_types[et_name]
     
-@dataclass(frozen=True)
-class ServiceMetadata:
-    entity_sets: Dict[str, str]          # entity_set -> entity_type_name
-    entity_types: Dict[str, EntityType]  # entity_type_name -> EntityType
-
-    def entity_type_for_set(self, entity_set: str) -> EntityType:
-        if entity_set not in self.entity_sets:
-            raise KeyError(f"Unknown entity set: {entity_set}")
-        et_name = self.entity_sets[entity_set]
-        if et_name not in self.entity_types:
-            raise KeyError(f"Entity type not found for set '{entity_set}': {et_name}")
-        return self.entity_types[et_name]
-    
-
 # ------- Parse Metadata -------- #
 
 class EdmxSourceError(ValueError):
     """Raised when the EDMX source cannot be loaded or validated."""
-
 
 class EdmxMetadata:
     _GUID_NAME_RE = re.compile(r"^_(.+?)_value$")
@@ -76,10 +60,9 @@ class EdmxMetadata:
         :param source:
         source may be:
           - Path/str to .xml or .json
-          - xml.etree.ElementTree.ElementTree
-          - xml.etree.ElementTree.Element (root)
-          - raw xml text
-          - already-parsed metadata list (optional convenience)
+          - xml.etree.ElementTree .ElementTree or .Element (root)
+          - raw xml or json text
+          - already-parsed metadata object
         :type source: Any
         """
         self._metadata: List[Dict[str, Any]] = []
@@ -111,7 +94,7 @@ class EdmxMetadata:
     def _load_source(self, source: Any) -> "EdmxMetadata._Loaded":
         # ------- Existing metadata list -------- #
         if isinstance(source, list):
-            # If passed already-parsed metadata list, cache it.
+            # If passed already-parsed metadata list, use it.
             self._validate_cached_metadata(source)
             return self._Loaded(kind="json", metadata=source)
 
@@ -124,12 +107,12 @@ class EdmxMetadata:
         
         # ------- String-like -------- #
         if isinstance(source, str):
-            # If it looks like a real path, treat it as path
+            # If it looks like a real path, treat it as path and try to load the file.
             possible_path = Path(source)
             if possible_path.exists():
                 return self._load_source(possible_path)
 
-            # otherwise treat as raw text
+            # otherwise treat as raw text.
             return self._load_from_text(source)
 
         # ------- Path-like -------- #
@@ -152,8 +135,7 @@ class EdmxMetadata:
             )
 
         raise EdmxSourceError(
-            "Unsupported source type. Provide a Provide a Path/str/.xml/.json text, "
-            "or an xml.etree.ElementTree.ElementTree/Element."
+            "Unsupported source type. Provide a Provide a Path/str to an exising .xml/.json file, text from a .xml/.json file, or an xml.etree.ElementTree.ElementTree/Element."
         )
     
     def _load_from_text(self, text: str) -> "EdmxMetadata._Loaded":
@@ -170,6 +152,7 @@ class EdmxMetadata:
                 self._validate_cached_metadata(data)
                 return self._Loaded(kind="json", metadata=data)
             except json.JSONDecodeError:
+                # invalid JSON
                 pass
             except EdmxSourceError:
                 # valid JSON but invalid structure
@@ -213,10 +196,8 @@ class EdmxMetadata:
         except OSError as e:
             raise EdmxSourceError(f"Could not read '{path}': {e}") from e
 
-        # Supports either:
-            # list of schema dicts
-            # single schema dict
         if isinstance(data, dict):
+            # if the parsed data is a dict, stuff it into a list to match expected format
             data = [data]
 
         self._validate_cached_metadata(data)

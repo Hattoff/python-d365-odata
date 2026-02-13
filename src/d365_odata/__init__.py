@@ -4,7 +4,7 @@ from .metadata import ServiceMetadata, EntityType, EdmxMetadata
 from .ast import (
     Expr, Prop, Literal,
     And, Or, Not,
-    Eq, Ne, Gt, Ge, Lt, Le,
+    Eq, Ne, Gt, Ge, Lt, Le, In_,
     Contains, StartsWith, EndsWith,
     P, L
 )
@@ -23,6 +23,7 @@ __all__ = [
             "Ge",
             "Lt",
             "Le",
+            "In_",
             "Contains",
             "StartsWith",
             "EndsWith",
