@@ -1,7 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Dict
-from collections import defaultdict
+from typing import Dict, Any, Optional, List
 import re
 
 # ------- Metadata Classes -------- #
@@ -70,48 +69,28 @@ class EdmxMetadata:
                 "functions": {}
             }
 
-            # ------- Entities with Attributes and Navigation Properties -------- #
-            for et in schema.findall("edm:EntityType", self.NS):
-                entity_name = et.get("Name")
-                entity_edm = schema.find(f"edm:EntityType[@Name='{entity_name}']", self.NS)
-                entity_keys = []
-                entity_attributes = {}
-                navigation_properties = {}
+            complex_types_prefetch = []
+            for ct in schema.findall("edm:ComplexType", self.NS):
+                complex_type_name = ct.get("Name")
+                complex_types_prefetch.append(complex_type_name)
 
-                if entity_edm:
-                    entity_keys = self.get_entity_keys(entity_edm, entity_name)
-                    entity_attributes = self.get_properties(entity_edm, schema_namespace, schema_alias)   
-                    navigation_properties = self.get_navigation_properties(entity_edm, entity_name, schema_alias)     
+            enum_types_prefetch = []
+            for em in schema.findall("edm:EnumType", self.NS):
+                enum_name = em.get("Name")
+                enum_types_prefetch.append(enum_name)
 
-                entity = {
-                    "name": entity_name,
-                    "primary_key": entity_keys[0] if entity_keys else None,
-                    "base_type": et.get("BaseType"),
-                    "abstract": et.get("Abstract"),
-                    "open_type": et.get("OpenType"),
-                    "entity_sets": [],
-                    "attributes": entity_attributes,
-                    "navigation_properties": navigation_properties,
+            # ------- Complex Types -------- #
+            for ct in schema.findall("edm:ComplexType", self.NS):
+                complex_type_name = ct.get("Name")
+                complex_base_type = ct.get("BaseType", None)
+                result["complex_types"][complex_type_name] = {
+                    "base_type": complex_base_type,
+                    "properties": self.get_properties(ct, schema_alias, complex_types=complex_types_prefetch, enum_types=enum_types_prefetch)
                 }
-
-                result["entities"][entity_name] = entity
 
             # ------- Enums -------- #
             for em in schema.findall("edm:EnumType", self.NS):
                 # When IsFlags is True, a combined value is equivalent to the bitwise OR (often denoted "|" ) of the discrete values.
-                # It encodes hierarchies of options.
-                # What this usually means is that most enumerated values will be (2^n) or (2^n) - 1.
-                # When a flag is one less than a power of two, it can be thought of as a combination of all powers of 2 less than it.
-                # In general:
-                    # p|q = q iif p = (2^n) and q < 2*p
-                    # r|s = r iif r = (2^n)-1 and s < 2*r
-                    # t|t = t for all positive t
-                    # w|x|y|...|z = (2^n)-1 iif w,x,y,...,z are all successive powers of 2 less than 2^n
-                # For example: If an enum had values 0, 1, 2, 4, 7, 8, 15...
-                        # Having a combined value of 3 is the same as having options 0, 1, and 2 since 0|1|2 => 3
-                        # Having a combined value of 7 is the same as having options 0, 1, 2, and 4 since 0|1|2|4 => 7
-                            # And so on...
-                        # Having a combined value of 10, a combination of 2 and 8, is an unlabled combination in this enum
                 enum_name = em.get("Name")
                 enum_is_flags = em.get("IsFlags", False)
                 members = {}
@@ -126,10 +105,31 @@ class EdmxMetadata:
                     "members": members
                 }
 
-            # ------- Complex Types -------- #
-            for ct in schema.findall("edm:ComplexType", self.NS):
-                complex_type_name = ct.get("Name")
-                result["complex_types"][complex_type_name] = self.get_properties(ct, schema_namespace, schema_alias)   
+            # ------- Entities with Attributes and Navigation Properties -------- #
+            for et in schema.findall("edm:EntityType", self.NS):
+                entity_name = et.get("Name")
+                entity_edm = schema.find(f"edm:EntityType[@Name='{entity_name}']", self.NS)
+                entity_keys = []
+                entity_attributes = {}
+                navigation_properties = {}
+
+                if entity_edm:
+                    entity_keys = self.get_entity_keys(entity_edm, entity_name)
+                    entity_attributes = self.get_properties(entity_edm, schema_alias, complex_types=complex_types_prefetch, enum_types=enum_types_prefetch)   
+                    navigation_properties = self.get_navigation_properties(entity_edm, entity_name, schema_alias)
+
+                entity = {
+                    "name": entity_name,
+                    "primary_key": entity_keys[0] if entity_keys else None,
+                    "base_type": et.get("BaseType"),
+                    "abstract": et.get("Abstract"),
+                    "open_type": et.get("OpenType"),
+                    "entity_sets": [],
+                    "attributes": entity_attributes,
+                    "navigation_properties": navigation_properties,
+                }
+
+                result["entities"][entity_name] = entity
 
             # ------- Functions -------- #
             for fn in schema.findall("edm:Function", self.NS):
@@ -144,10 +144,10 @@ class EdmxMetadata:
                             if "OptionalParameter" in (annotation.get("Term","") or ""):
                                 is_optional = True
                                 break
-                        
                         parameters[param_name] = {
                             "type": param_type,
-                            "is_complex": (param_name in result["complex_types"]),
+                            "is_complex": self.type_is_custom(type_str=param_type, alias=schema_alias, custom_types=complex_types_prefetch),
+                            "is_enum":  self.type_is_custom(type_str=param_type, alias=schema_alias, custom_types=enum_types_prefetch),
                             "optional": is_optional,
                         }
 
@@ -203,15 +203,31 @@ class EdmxMetadata:
             metadata.append(result)
         return metadata
     
+    def type_is_custom(self, type_str: str, alias: str, custom_types: List[str]):
+        if type_str and type_str.startswith(f"{alias}."):
+            clean_type = self.cleanup_name(name=type_str, alias=alias)
+            # is_custom = (clean_type in custom_types)
+            # if (not is_custom) and clean_type.endswith("Code"):
+            #     clean_enum_type = clean_type.removesuffix("Code")
+            #     return (clean_enum_type in custom_types)
+            # return is_custom
+            return (clean_type in custom_types)
+        return False
+    
     # Remove preceeding namespace or alias values from element names
-    def cleanup_name(self, name: str, namespace: str, alias: str) -> str:
-        if f"{namespace}." in name:
-            clean_name = name.removeprefix(f"{namespace}.")
-        elif f"{alias}." in name:
-            clean_name = name.removeprefix(f"{alias}.")
-        else:
-            clean_name = name
-        return clean_name
+    def cleanup_name(self, name: str, namespace: Optional[str] = "", alias: Optional[str] = "") -> Optional[str]:
+        if not name:
+            return None
+        
+        if namespace and name.startswith(namespace + "."):
+            clean_name = name.removeprefix(namespace + ".")
+            return clean_name
+        
+        if alias and name.startswith(alias + "."):
+            clean_name = name.removeprefix(alias + ".")
+            return clean_name
+        
+        return name
     
     # Get key elements
     def get_entity_keys(self, entity_type_elem, entity_name):
@@ -235,23 +251,31 @@ class EdmxMetadata:
         m = self._COLLECTION_RE.match(type_str)
         if m:
             return True, m.group("inner")
-        return False, type_str.strip()
+        return False, None
     
     # Get the properties of a given element
-    def get_properties(self, element, schema_namespace, schema_alias):
+    def get_properties(self, element, schema_alias, complex_types, enum_types):
         all_props = {}
         for p in element.findall("edm:Property", self.NS):
             property_name = p.get("Name")
             property_type = p.get("Type")
-            is_collection, full_collection_type = self.check_collection_type(property_type)
-            collection_type = self.cleanup_name(name=full_collection_type, namespace=schema_namespace, alias=schema_alias)
+            is_collection, collection_type = self.check_collection_type(property_type)
+            if is_collection:
+                is_complex = self.type_is_custom(type_str=collection_type, alias=schema_alias, custom_types=complex_types)
+                is_enum = self.type_is_custom(type_str=collection_type, alias=schema_alias, custom_types=enum_types)
+            else:
+                is_complex = self.type_is_custom(type_str=property_type, alias=schema_alias, custom_types=complex_types)
+                is_enum = self.type_is_custom(type_str=property_type, alias=schema_alias, custom_types=enum_types)
+                
             normalized_name = self.normalize_property_name(property_name, property_type)
             property = {
                 "logical_name": self.normalize_property_name(property_name, property_type),
                 "api_name":property_name,
                 "type": property_type,
+                "is_complex": is_complex,
+                "is_enum": is_enum,
                 "is_collection": is_collection,
-                "collection_type": collection_type if collection_type and is_collection else None
+                "collection_type": collection_type
             }
             all_props[normalized_name] = property
         return all_props
