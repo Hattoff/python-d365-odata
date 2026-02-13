@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from .metadata import EntityType
 from .types import OrderByItem
+from .expand import ExpandItem, ExpandQuery
 from .ast import (
     Expr, Prop, Literal,
     And, Or, Not,
@@ -53,6 +54,7 @@ def validate_expr(expr: Expr, entity_type: EntityType) -> None:
         return
 
     # Binary nodes
+    # TODO: use the new binary classes to identify these in general
     for bin_type in (Eq, Ne, Gt, Ge, Lt, Le, Contains, StartsWith, EndsWith):
         if isinstance(expr, bin_type):
             validate_expr(expr.left, entity_type)     # type: ignore[attr-defined]
@@ -96,3 +98,4 @@ def validate_query(q: ODataQuery, entity_type: EntityType) -> None:
     # Validate top
     if q._top is not None and q._top < 0:
         raise ValueError("$top must be non-negative")
+    

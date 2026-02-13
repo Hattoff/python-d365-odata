@@ -42,7 +42,7 @@ class FromTarget(BaseTarget):
         return FromTarget(
             allowed_parts=frozenset({
                 QueryPart.SELECT, QueryPart.FILTER, QueryPart.ORDERBY,
-                QueryPart.SKIP, QueryPart.TOP, QueryPart.COUNT
+                QueryPart.SKIP, QueryPart.TOP, QueryPart.COUNT, QueryPart.EXPAND
             }),
             entity_set=entity_set,
             id=id,

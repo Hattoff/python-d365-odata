@@ -4,8 +4,9 @@ from typing import Any, Optional, List
 
 from .metadata import ServiceMetadata
 from .types import OrderByItem, QueryPart
+from .expand import ExpandItem, ExpandQuery
 from .ast import Expr, And, Or
-from .compiler import compile_expr, compile_orderby
+from .compiler import compile_expr, compile_orderby, compile_expand
 from .validator import validate_query
 from .flatten import flatten_fields, flatten_orderby, flatten_exprs
 from .targets import Target, FromTarget, EntityDefinitionsTarget, MetadataTarget, WhoAmITarget
@@ -25,6 +26,8 @@ class ODataQuery:
     _orderby: List[OrderByItem] = field(default_factory=list)
     _skip: Optional[int] = None
     _top: Optional[int] = None
+    _expand: List[ExpandItem] = field(default_factory=list)
+
 
     # ------- Target -------- #
     def from_(
@@ -83,8 +86,6 @@ class ODataQuery:
         self._filter = incoming if self._filter is None else Or(self._filter, incoming)
         return self
 
-    # ------- Expand -------- #
-    
     # ------- Aggregate -------- #
     def count_(self, enabled: bool = True) -> "ODataQuery":
         self._count = bool(enabled)
@@ -114,6 +115,17 @@ class ODataQuery:
         self._top = n
         return self
     
+    # ------- Expand -------- #
+    def expand_(self, nav: str, query: Optional[ExpandQuery] = None) -> "ODataQuery":
+        """
+        Add a $expand clause.
+
+        Usage Example:
+            q.expand_("primarycontactid", ExpandQuery().select_("fullname").top_(1))
+        """
+        self._expand.append(ExpandItem(nav=nav, query=query))
+        return self
+    
     @property
     def _present_parts(self) -> set[QueryPart]:
         present: set[QueryPart] = set()
@@ -129,6 +141,8 @@ class ODataQuery:
             present.add(QueryPart.TOP)
         if self._count is not None:
             present.add(QueryPart.COUNT)
+        if self._expand:
+            present.add(QueryPart.EXPAND)
         return present
 
 
@@ -172,6 +186,9 @@ class ODataQuery:
             parts.append("$skip=" + str(self._skip))
         if self._top is not None:
             parts.append("$top=" + str(self._top))
+        if self._expand:
+            parts.append("$expand=" + compile_expand(self._expand))
+
 
         base = self._target.to_path()
         return base + (("?" + "&".join(parts)) if parts else "")

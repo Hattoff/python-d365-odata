@@ -1,5 +1,6 @@
 from .query import ODataQuery
 from .types import OrderByItem
+from.expand import ExpandQuery
 from .metadata import ServiceMetadata, EntityType, EdmxMetadata
 from .ast import (
     Expr, Prop, Literal,
@@ -11,6 +12,7 @@ from .ast import (
 
 __all__ = [
             "ODataQuery", 
+            "ExpandQuery",
             "Expr",
             "Prop",
             "Literal",

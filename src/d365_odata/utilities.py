@@ -1,7 +1,6 @@
 from __future__ import annotations
 from uuid import UUID
 
-
 def _is_guid(value: str) -> bool:
     try:
         UUID(str(value))

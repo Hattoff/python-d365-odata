@@ -1,8 +1,9 @@
 
 from __future__ import annotations
-from typing import Any, Sequence
+from typing import Any, Sequence, List
 import datetime
 from .types import OrderByItem
+from .expand import ExpandItem, ExpandQuery
 from .ast import (
     And, Or, Not,
     Eq, Ne, Gt, Ge, Lt, Le,
@@ -10,10 +11,10 @@ from .ast import (
     Prop, Literal, Expr, In_
 )
 
+# TODO: move to a config file
 use_in_operator: bool = False  # default to OR expansion
 
-# ------- Compile to OData -------- #
-
+# ------- Compile common expressions -------- #
 def compile_expr(expr: Expr) -> str:
     # Add parentheses to ensure logic is mapped correctly
     if isinstance(expr, Prop):
@@ -57,7 +58,7 @@ def compile_expr(expr: Expr) -> str:
 
     raise TypeError(f"Unknown expression node: {type(expr)!r}")
 
-
+# ------- Compile Literals -------- #
 def compile_literal(value: Any) -> str:
     # OData v4 literal rules
     if value is None:
@@ -83,6 +84,7 @@ def compile_literal(value: Any) -> str:
     escaped = str(value).replace("'", "''")
     return f"'{escaped}'"
 
+# ------- Compile order-by expressions -------- #
 def compile_orderby(items: Sequence[OrderByItem]) -> str:
     # "Name asc,CreatedAt desc"
     chunks = []
@@ -91,10 +93,11 @@ def compile_orderby(items: Sequence[OrderByItem]) -> str:
         chunks.append(f"{it.field}{suffix}")
     return ",".join(chunks)
 
+# ------- Compile In expression -------- #
 def compile_in(node: In_) -> str:
     left = compile_expr(node.left)
 
-    # empty list: choose behavior
+    # empty list
     if not node.options:
         return "(false)"
 
@@ -106,3 +109,34 @@ def compile_in(node: In_) -> str:
     # default: (field eq 1) or (field eq 2) ...
     parts = [f"({left} eq {compile_expr(v)})" for v in node.options]
     return f"({' or '.join(parts)})"
+
+
+
+# ------- Compile Expand -------- #
+def compile_expand(items: List[ExpandItem]) -> str:
+    # $expand=a(...),b(...)
+    return ",".join(_compile_expand_item(it) for it in items)
+
+def _compile_expand_item(it: ExpandItem) -> str:
+    if it.query is None:
+        return it.nav
+
+    inner_parts: list[str] = []
+
+    if it.query._select:
+        inner_parts.append("$select=" + ",".join(it.query._select))
+    if it.query._filter is not None:
+        inner_parts.append("$filter=" + compile_expr(it.query._filter))
+    if it.query._count is not None:
+        inner_parts.append("$count=" + ("true" if it.query._count else "false"))
+    if it.query._orderby:
+        inner_parts.append("$orderby=" + compile_orderby(it.query._orderby))
+    if it.query._skip is not None:
+        inner_parts.append("$skip=" + str(it.query._skip))
+    if it.query._top is not None:
+        inner_parts.append("$top=" + str(it.query._top))
+    if it.query._expand:
+        inner_parts.append("$expand=" + compile_expand(it.query._expand))
+
+    # NOTE: inside expand parentheses, options are ';' separated per OData URL conventions
+    return f"{it.nav}(" + ";".join(inner_parts) + ")"
