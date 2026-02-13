@@ -127,7 +127,6 @@ class CoercingBinary(Expr):
 class StrictBinary(Expr):
     left: Expr
     right: Expr
-
     def __init__(self, left: Expr, right: Expr):
         # runtime safety: fail fast if someone passes non-Expr
         if not isinstance(left, Expr) or not isinstance(right, Expr):
@@ -143,7 +142,6 @@ class StrictBinary(Expr):
 class And(Expr):
     terms: Tuple[Any, ...]
     """Terms can be AND Expressions or any iterable combination of them."""
-
     def __init__(self, *terms: Any):
         # Normalize: And(a, And(b,c), d) -> And(a,b,c,d)
         flat = []
@@ -159,7 +157,6 @@ class And(Expr):
 class Or(Expr):
     terms: Tuple[Any, ...]
     """Terms can be OR Expressions or any iterable combination of them."""
-
     def __init__(self, *terms: Any):
         # Normalize: Or(a, Or(b,c), d) -> Or(a,b,c,d)
         flat = []

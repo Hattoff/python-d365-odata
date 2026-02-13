@@ -1,4 +1,4 @@
-from .query import ODataQuery
+from .query import ODataQueryBuilder, OData
 from .types import OrderByItem
 from.expand import ExpandQuery
 from .metadata import ServiceMetadata, EntityType, EdmxMetadata, service_metadata_from_parsed_edmx
@@ -11,7 +11,8 @@ from .ast import (
 )
 
 __all__ = [
-            "ODataQuery", 
+            "ODataQueryBuilder", 
+            "OData",
             "ExpandQuery",
             "Expr",
             "Prop",

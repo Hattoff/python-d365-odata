@@ -4,7 +4,7 @@ from __future__ import annotations
 from .metadata import EntityType
 from .types import OrderByItem, FunctionDef
 from .expand import ExpandItem, ExpandQuery
-from .targets import FromTarget, EntityDefinitionsTarget, WhoAmITarget, FunctionTarget, MetadataTarget
+from .targets import FromTarget, EntityDefinitionsTarget, WhoAmITarget, FunctionTarget, EdmxTarget
 from .metadata import ServiceMetadata
 from .ast import (
     Expr, Prop, Literal,
@@ -18,13 +18,40 @@ from .utilities import _is_guid
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from .query import ODataQuery
+    from .query import ODataQueryBuilder
 
 
 class ValidationError(ValueError):
     pass
 
-# ------- Validation -------- #
+# ------- EDM Type Validation -------- #
+
+def wrap_edm_type(value: Any, expected_type: str):
+    if isinstance(value, Expr):
+        return value
+    if expected_type == ("Edm.String"):
+        return Literal(value)
+    else:
+        return Prop(value)
+
+def _value_matches_edm(value: Any, edm_type: str) -> bool:
+    if value is None:
+        return True
+
+    if edm_type == "Edm.String":
+        return isinstance(value, str)
+    if edm_type == "Edm.Boolean":
+        return isinstance(value, bool)
+    if edm_type in ("Edm.Int32", "Edm.Int16", "Edm.Int64"):
+        return isinstance(value, int) and not isinstance(value, bool)
+    if edm_type in ("Edm.Decimal", "Edm.Double", "Edm.Single"):
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if edm_type == "Edm.Guid":
+        return isinstance(value, str) and _is_guid(value)
+    # don't block unknown EDM types for now
+    return True
+
+# ------- Query Part Validation -------- #
 
 def validate_select(select_fields: list[str], entity_type: EntityType) -> None:
     for f in select_fields:
@@ -77,7 +104,7 @@ def validate_expr(expr: Expr, entity_type: EntityType) -> None:
     raise TypeError(f"Unknown expression node: {type(expr)!r}")
 
 
-def validate_query(q: ODataQuery, entity_type: EntityType) -> None:
+def validate_query(q: ODataQueryBuilder, entity_type: EntityType) -> None:
     """
     Validate query parts individually
     
@@ -109,13 +136,13 @@ def validate_query(q: ODataQuery, entity_type: EntityType) -> None:
         raise ValueError("$top must be non-negative")
     
 
-def validate_target(query: "ODataQuery", metadata: Optional[ServiceMetadata]) -> None:
+def validate_target(query: "ODataQueryBuilder", metadata: Optional[ServiceMetadata]) -> None:
     t = query._target
     if t is None:
         raise ValidationError("Query has no target. Call from_(), whoami_(), etc.")
 
     # Targets that don't require metadata
-    if isinstance(t, (WhoAmITarget, MetadataTarget, EntityDefinitionsTarget)):
+    if isinstance(t, (WhoAmITarget, EdmxTarget, EntityDefinitionsTarget)):
         return
 
     # Targets that require metadata
@@ -130,18 +157,31 @@ def validate_target(query: "ODataQuery", metadata: Optional[ServiceMetadata]) ->
     if isinstance(t, FunctionTarget):
         fn = metadata.function_for_api(t.api_name)
 
+        normalized: dict[str, object] = {}
+        for k, v in t.params.items():
+            real = fn.resolve_param_name(k) or k
+            # if parameter name is an alias, convert; if unknown, keep it so the "unknown param" check catches it.
+            if real in normalized:
+                raise ValidationError(f"Parameter provided more than once (after normalization): {k!r} -> {real!r}")
+            normalized[real] = v
+
+        # validate using normalized keys
+
         # required parameters
         for pname, p in fn.params.items():
-            if not p.is_optional and pname not in t.params:
+            if not p.is_optional and pname not in normalized:
                 raise ValidationError(f"Missing required parameter {pname!r} for function {fn.api_name!r}")
 
-        # unknown parameters
-        for provided in t.params.keys():
+        # type checking
+        for provided in normalized.keys():
             if provided not in fn.params:
-                raise ValidationError(f"Unknown parameter {provided!r} for function {fn.api_name!r}")
+                raise ValidationError(
+                    f"Unknown parameter {provided!r} for function {fn.api_name!r}. "
+                    f"Valid: {', '.join(sorted(fn.public_param_names()))}"
+                )
 
         # type checking
-        for pname, val in t.params.items():
+        for pname, val in normalized.items():
             expected = fn.params[pname].edm_type
             if not _value_matches_edm(val, expected):
                 raise ValidationError(
@@ -149,51 +189,25 @@ def validate_target(query: "ODataQuery", metadata: Optional[ServiceMetadata]) ->
                 )
 
         return
+
     raise ValidationError(f"Unsupported target type for validation: {type(t).__name__}")
-
-def _value_matches_edm(value: Any, edm_type: str) -> bool:
-    if value is None:
-        return True
-
-    if edm_type == "Edm.String":
-        return isinstance(value, str)
-    if edm_type == "Edm.Boolean":
-        return isinstance(value, bool)
-    if edm_type in ("Edm.Int32", "Edm.Int16", "Edm.Int64"):
-        return isinstance(value, int) and not isinstance(value, bool)
-    if edm_type in ("Edm.Decimal", "Edm.Double", "Edm.Single"):
-        return isinstance(value, (int, float)) and not isinstance(value, bool)
-    if edm_type == "Edm.Guid":
-        return isinstance(value, str) and _is_guid(value)
-    # don't block unknown EDM types for now
-    return True
-
+    
 class FunctionParamsBuilder:
-    def __init__(self, query: "ODataQuery", fn: FunctionDef):
+    def __init__(self, query: "ODataQueryBuilder", fn: FunctionDef):
         self._q = query
         self._fn = fn
 
-        # Build lookup tables once
-        self._param_names = set(fn.params.keys())  # e.g. {"Target", "FieldName"}
-        self._public_to_real: dict[str, str] = {}
-
-        for real in self._param_names:
-            # public: _Target and _target
-            self._public_to_real[f"_{real}"] = real
-            self._public_to_real[f"_{real.lower()}"] = real
-
+    def __dir__(self):
+        return sorted(set(dir(self._q)) | self._fn.public_param_names() | set(super().__dir__()))
+    
     @property
-    def done_(self) -> "ODataQuery":
+    def done_(self) -> "ODataQueryBuilder":
         return self._q
 
-    def __dir__(self):
-        # show parameter setters + query methods for completion
-        return sorted(set(dir(self._q)) | set(self._public_to_real.keys()) | set(super().__dir__()))
-
     def __getattr__(self, name: str):
-        # 1) Parameter setters: ._Target(...), ._target(...)
-        real = self._public_to_real.get(name)
-        if real is not None:
+        # Parameter setters: ._{name}(...), ._{name.lower()}(...)
+        real = self._fn.resolve_param_name(name)
+        if real is not None and name.startswith("_"):
             def setter(value):
                 expected = self._fn.params[real].edm_type
                 if not _value_matches_edm(value, expected):
@@ -206,12 +220,11 @@ class FunctionParamsBuilder:
                 new_params = dict(t.params)
                 new_params[real] = value
                 self._q._target = FunctionTarget.create(t.api_name, **new_params)
-
-                return self  # keep chaining on builder
+                return self
 
             return setter
 
-        # 2) Anything else: forward to ODataQuery, preserving fluent chaining
+        # Forward to ODataQuery
         attr = getattr(self._q, name)
         if callable(attr):
             def wrapped(*args, **kwargs):
@@ -219,6 +232,7 @@ class FunctionParamsBuilder:
                 return self if res is self._q else res
             return wrapped
         return attr
+
 
 
 

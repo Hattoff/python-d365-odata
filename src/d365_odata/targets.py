@@ -56,11 +56,11 @@ class FunctionTarget(BaseTarget):
 @dataclass(frozen=True)
 class FromTarget(BaseTarget):
     entity_set: str
-    id: Optional[str] = None
+    id: Optional[Any] = None
     """guid string, no quotes in URL"""
 
     @staticmethod
-    def create(entity_set: str, id: Optional[str] = None) -> "FromTarget":
+    def create(entity_set: str, id: Optional[Any] = None) -> "FromTarget":
         if id is not None and not _is_guid(id):
             raise ValueError(f"Invalid GUID for entity id: {id!r}")
         return FromTarget(
@@ -112,14 +112,14 @@ class EntityDefinitionsTarget(BaseTarget):
         return "/EntityDefinitions"
 
 @dataclass(frozen=True)
-class MetadataTarget(BaseTarget):
+class EdmxTarget(BaseTarget):
     """
     Hard-coded to allow for fetching of system data necessary for metadata construction.
     Query the $Metadata endpoint for Edmx (XML) document.
     """
     @staticmethod
-    def create() -> "MetadataTarget":
-        return MetadataTarget(
+    def create() -> "EdmxTarget":
+        return EdmxTarget(
             allowed_parts=frozenset({QueryPart.__NONE__})
         )
 

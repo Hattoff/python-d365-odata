@@ -9,17 +9,28 @@ from .ast import Expr, And, Or
 from .compiler import compile_expr, compile_orderby, compile_expand
 from .validator import validate_query, validate_target, FunctionParamsBuilder
 from .flatten import flatten_fields, flatten_orderby, flatten_exprs
-from .targets import Target, FromTarget, EntityDefinitionsTarget, MetadataTarget, WhoAmITarget, FunctionTarget
+from .targets import Target, FromTarget, EntityDefinitionsTarget, EdmxTarget, WhoAmITarget, FunctionTarget
+
+import logging
+logger = logging.getLogger(__name__)
+
+# ------- Query wrapper -------- #
+@dataclass(frozen=True)
+class OData:
+    """Wrapper class for ODataQueryBuilder ensures you use the same metadata for each query by locking it."""
+    metadata: Optional[ServiceMetadata] = None
+
+    def query(self) -> "ODataQueryBuilder":
+        return ODataQueryBuilder(metadata=self.metadata, metadata_lock=True)
+
 
 # ------- Query builder -------- #
-
 @dataclass
-class ODataQuery:
-    # Targets
+class ODataQueryBuilder:
     _metadata: Optional[ServiceMetadata] = None
-    _target: Optional[Target] = None
 
     # Query options
+    _target: Optional[Target] = None
     _select: List[str] = field(default_factory=list)
     _filter: Optional[Expr] = None
     _count: Optional[bool] = None
@@ -28,53 +39,159 @@ class ODataQuery:
     _top: Optional[int] = None
     _expand: List[ExpandItem] = field(default_factory=list)
 
+    def __init__(self, metadata: Optional[ServiceMetadata] = None, metadata_lock: bool = False):
+        self._metadata = metadata
+        self._target = None
+        self._select = []
+        self._filter = None
+        self._count = None
+        self._orderby = []
+        self._skip = None
+        self._top = None
+        self._expand = []
+        self._metadata_lock = metadata_lock
+
+    # Optional way to implement the metadata while building the query.
+    def using_(self, metadata: ServiceMetadata) -> "ODataQueryBuilder":
+        """Set the metadata object to enable more query funtionality like .function_ and query validation."""
+        if self._metadata_lock:
+           logger.warning("Attempted to change the metadata on this query builder but the metadata lock prevented the change.")
+           return self 
+        self._metadata = metadata
+        return self
 
     # ------- Target -------- #
     def from_(
         self,
         entity_set: str = None,
-        metadata: Optional[ServiceMetadata] = None,
-        id: Optional[str] = None
-    ) -> "ODataQuery":
-        if metadata is not None:
-            self._metadata = metadata
+        id: Optional[Any] = None
+    ) -> "ODataQueryBuilder":
+        """
+        #### Query Part:
+         -Target a specific entity-set.
+        
+        :param entity_set: Entity's entity-set name. Optionally use the logical name (**requires** metadata).
+        :type entity_set: str
+        :param id: Target a specific record by GUID.
+        :type id: Optional[Any]
+        """
         self._target = FromTarget.create(entity_set=entity_set, id=id)
         return self
 
-    def function_(self, api_name: str, metadata: Optional[ServiceMetadata] = None, **params: Any) -> "ODataQuery":
-        if metadata is not None:
-            self._metadata = metadata
-        self._target = FunctionTarget.create(api_name, **params)
+    def function_(self, api_name: str, **params: Any) -> "ODataQueryBuilder":
+        """
+        #### Query Part:
+         -Target a specific function (**requires** metadata).
+
+        :param api_name: Name of the function exposed to the API.
+        :type api_name: str
+        :param params: Set parameter values by {ParamName}=, _{ParamName}=, or _{paramname}=. Optionally, set function parameters using the .params_ query part.
+        :type params: Any
+        """
+        # if no metadata, we can't resolve aliases safely, so keep as-is.
+        if self._metadata is None:
+            self._target = FunctionTarget.create(api_name, **params)
+            return self
+        
+        fn = self._metadata.function_for_api(api_name)
+        
+        normalized: dict[str, object] = {}
+        for k, v in params.items():
+            real = fn.resolve_param_name(k)
+            if real is None:
+                # raise issue immediately since metadata is present.
+                raise TypeError(
+                    f"Unknown parameter {k!r} for function {fn.api_name!r}. "
+                    f"Valid: {', '.join(sorted(fn.public_param_names()))}"
+                )
+            if real in normalized:
+                raise TypeError(f"Parameter provided more than once (after normalization): {k!r} -> {real!r}")
+            normalized[real] = v
+
+        self._target = FunctionTarget.create(api_name=api_name, **normalized)
         return self
+    
+    @property
+    def params_(self) -> FunctionParamsBuilder:
+        """
+        #### Query Part:
+         -Alternate method of setting function parameter values
+         -Only needs to be called once per query unless the .done_ Query Part was called
+        """
+        if not isinstance(self._target, FunctionTarget):
+            raise AttributeError("params is only available for FunctionTarget queries")
+        if not self._metadata:
+            raise AttributeError("params requires metadata to provide hints")
+        fn = self._metadata.function_for_api(self._target.api_name)
+        return FunctionParamsBuilder(self, fn)
 
     def entitydefinitions_(
         self,
-        entity_id: Optional[str] = None,
-        metadata: Optional[ServiceMetadata] = None
-    ) -> "ODataQuery":
-        if metadata is not None:
-            self._metadata = metadata
+        entity_id: Optional[Any] = None
+    ) -> "ODataQueryBuilder":
+        """
+        #### Query Part:
+         -Target the hard-coded /EntityDefinitions enpoint.
+         -Does **NOT** support any other query parts.
+        #### For query part support:
+         -Use .function_("EntityDefinitions") with metadata.
+
+        :param entity_id: Target a specific entity by GUID or logical name.
+        :type entity_id: Optional[Any]
+        """
         self._target = EntityDefinitionsTarget.create(entity_id=entity_id)
         return self
     
-    def metadata_(self) -> "ODataQuery":
-        self._target = MetadataTarget.create()
+    def edmx_(self) -> "ODataQueryBuilder":
+        """
+        #### Query Part:
+         -Target the hard-coded /$Metadata enpoint.
+         -Does **NOT** support any other query parts.
+        """
+        self._target = EdmxTarget.create()
         return self
     
-    def whoami_(self) -> "ODataQuery":
+    def whoami_(self) -> "ODataQueryBuilder":
+        """
+        #### Query Part:
+         -Target the hard-coded /WhoAmI enpoint.
+         -Does **NOT** support any other query parts.
+         -For query part support, use .function_("WhoAmI") with metadata.
+        """
         self._target = WhoAmITarget.create()
         return self
 
     # ------- Select -------- #
-    def select_(self, *fields: str) -> "ODataQuery":
-        normalized = flatten_fields(*fields)
+    def select_(self, *fields: str) -> "ODataQueryBuilder":
+        """
+        #### Query Part:
+         -Select specific properties from an entity-set.
+         -Duplicate values will be removed.
+         -Order **NOT** guaranteed
+        
+        :param fields: Pass one/multiple field names or Lists/Sets/Tuples of field names. 
+        :type fields: str
+        """
+        normalized = flatten_fields(*fields) # Flatten iterable containers or raw parameters into a deduplicated list.
         for f in normalized:
             if f not in self._select:
                 self._select.append(f)
         return self
 
     # ------- Criteria -------- #
-    def where_(self, *items: Any) -> "ODataQuery":
+    def where_(self, *items: Any) -> "ODataQueryBuilder":
+        """
+        #### Query Part:
+         -Apply a variety of Expressions to curtail the resulting records.
+         -Expressions are combined using **AND** if not explicitly stated.
+        #### Can use: 
+         -And(), Or(), Not(), Eq(), Ne(), Gt(), Ge(), Lt(), Le(), In_()
+         -Contains(), StartsWith(), EndsWith()
+         -& [and], | [or], ~ [not]
+         -Prop().startswith(), Prop().endswith(), Prop().contains(), Prop().in_
+         -[Prop()|Literal()] {>, >=, ==, !=, <=, <} [Prop()|Literal()]
+        ##### See documentation for more details.
+        """
         exprs = flatten_exprs(*items)
         if not exprs:
             return self
@@ -83,7 +200,19 @@ class ODataQuery:
         self._filter = incoming if self._filter is None else And(self._filter, incoming)
         return self
 
-    def or_where_(self, *items: Any) -> "ODataQuery":
+    def or_where_(self, *items: Any) -> "ODataQueryBuilder":
+        """
+        #### Query Part:
+         -Apply a variety of Expressions to curtail the resulting records.
+         -Expressions are combined using **OR** if not explicitly stated.
+        #### Can use: 
+         -And(), Or(), Not(), Eq(), Ne(), Gt(), Ge(), Lt(), Le(), In_()
+         -Contains(), StartsWith(), EndsWith()
+         -& [and], | [or], ~ [not]
+         -Prop().startswith(), Prop().endswith(), Prop().contains(), Prop().in_
+         -[Prop()|Literal()] {>, >=, ==, !=, <=, <} [Prop()|Literal()]
+        ##### See documentation for more details.
+        """
         exprs = flatten_exprs(*items)
         if not exprs:
             return self
@@ -93,12 +222,21 @@ class ODataQuery:
         return self
 
     # ------- Aggregate -------- #
-    def count_(self, enabled: bool = True) -> "ODataQuery":
+    def count_(self, enabled: bool = True) -> "ODataQueryBuilder":
+        """
+        #### Query Part:
+         -Get a count of records expected to be returned by the query.
+        """
         self._count = bool(enabled)
         return self
 
     # ------- Order -------- #
-    def orderby_(self, *items: Any) -> "ODataQuery":
+    def orderby_(self, *items: Any) -> "ODataQueryBuilder":
+        """
+        #### Query Part:
+         -Order records by a property in (asc)ending or (desc)ending order.
+         -Default ordering is decending.
+        """
         normalized = flatten_orderby(*items)
         seen = {(i.field, i.desc) for i in self._orderby}
         for it in normalized:
@@ -109,38 +247,35 @@ class ODataQuery:
         return self
 
     # ------- Misc -------- #
-    def skip_(self, n: int) -> "ODataQuery":
+    def skip_(self, n: int) -> "ODataQueryBuilder":
         if not isinstance(n, int) or n < 0:
             raise ValueError("$skip must be a non-negative integer")
         self._skip = n
         return self
 
-    def top_(self, n: int) -> "ODataQuery":
+    def top_(self, n: int) -> "ODataQueryBuilder":
+        """
+        #### Query Part:
+         -Return only n-records at most.
+        """
         if not isinstance(n, int) or n < 0:
             raise ValueError("$top must be a non-negative integer")
         self._top = n
         return self
     
     # ------- Expand -------- #
-    def expand_(self, nav: str, query: Optional[ExpandQuery] = None) -> "ODataQuery":
+    def expand_(self, nav: str, query: Optional[ExpandQuery] = None) -> "ODataQueryBuilder":
         """
-        Add a $expand clause.
+        #### Query Part:
+         -Add a $expand clause.
+         -Joins to an associated table.
+         -ExpandQueries can have their own set of query parts.
 
-        Usage Example:
+        #### Usage Example:
             q.expand_("primarycontactid", ExpandQuery().select_("fullname").top_(1))
         """
         self._expand.append(ExpandItem(nav=nav, query=query))
         return self
-    
-
-    @property
-    def params_(self) -> FunctionParamsBuilder:
-        if not isinstance(self._target, FunctionTarget):
-            raise AttributeError("params is only available for FunctionTarget queries")
-        if not self._metadata:
-            raise AttributeError("params requires metadata to provide hints")
-        fn = self._metadata.function_for_api(self._target.api_name)
-        return FunctionParamsBuilder(self, fn)
 
     @property
     def _present_parts(self) -> set[QueryPart]:

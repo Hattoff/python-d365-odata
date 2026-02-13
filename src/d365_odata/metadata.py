@@ -19,9 +19,12 @@ class EntityType:
 
 @dataclass(frozen=True)
 class ServiceMetadata:
-    entity_sets: Dict[str, str]          # entity_set -> entity_type_name
-    entity_types: Dict[str, EntityType]  # entity_type_name -> EntityType
-    functions: Dict[str, FunctionDef] = None    # api_name -> FunctionDef (or name -> FunctionDef)
+    entity_sets: Dict[str, str]
+    """maps entity sets to entities"""
+    entity_types: Dict[str, EntityType]
+    """maps entities to EntityType objects"""
+    functions: Dict[str, FunctionDef] = None
+    """maps functions to FunctionDef objects"""
 
     def entity_type_for_set(self, entity_set: str) -> EntityType:
         if entity_set not in self.entity_sets:
@@ -48,7 +51,7 @@ def service_metadata_from_parsed_edmx(parsed: list[dict]) -> ServiceMetadata:
     for ename, e in schema["entities"].items():
         if e.get("entity_set_name"):
             entity_sets[e["entity_set_name"]] = ename
-            
+
         props = {pname: pinfo["type"] for pname, pinfo in e["attributes"].items()}
         entity_types[ename] = EntityType(name=ename, properties=props)
 
