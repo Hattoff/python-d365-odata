@@ -52,6 +52,30 @@ class FromTarget(BaseTarget):
         if self.id:
             return f"/{self.entity_set}({_normalize_guid(self.id)})"
         return f"/{self.entity_set}"
+    
+@dataclass(frozen=True)
+class ExpandTarget(BaseTarget):
+    entity_set: str
+    id: Optional[str] = None
+    """guid string, no quotes in URL"""
+
+    @staticmethod
+    def create(entity_set: str, id: Optional[str] = None) -> "FromTarget":
+        if id is not None and not _is_guid(id):
+            raise ValueError(f"Invalid GUID for entity id: {id!r}")
+        return FromTarget(
+            allowed_parts=frozenset({
+                QueryPart.SELECT, QueryPart.FILTER, QueryPart.ORDERBY,
+                QueryPart.SKIP, QueryPart.TOP, QueryPart.COUNT
+            }),
+            entity_set=entity_set,
+            id=id,
+        )
+
+    def to_path(self) -> str:
+        if self.id:
+            return f"/{self.entity_set}({_normalize_guid(self.id)})"
+        return f"/{self.entity_set}"
 
 @dataclass(frozen=True)
 class EntityDefinitionsTarget(BaseTarget):
@@ -82,14 +106,9 @@ class EntityDefinitionsTarget(BaseTarget):
             escaped = self.logical_name.replace("'", "''")
             return f"/EntityDefinitions(LogicalName='{escaped}')"
         return "/EntityDefinitions"
-    
 
 @dataclass(frozen=True)
 class MetadataTarget(BaseTarget):
-    logical_name: Optional[str] = None
-    id: Optional[str] = None
-    """guid string, no quotes in URL"""
-
     @staticmethod
     def create() -> "MetadataTarget":
         return MetadataTarget(
@@ -98,3 +117,14 @@ class MetadataTarget(BaseTarget):
 
     def to_path(self) -> str:
         return "/$Metadata"
+    
+@dataclass(frozen=True)
+class WhoAmITarget(BaseTarget):
+    @staticmethod
+    def create() -> "WhoAmITarget":
+        return WhoAmITarget(
+            allowed_parts=frozenset({QueryPart.__NONE__})
+        )
+
+    def to_path(self) -> str:
+        return "/WhoAmI"

@@ -1,6 +1,6 @@
 from .query import ODataQuery
 from .types import OrderByItem
-from .metadata import ServiceMetadata, EntityType
+from .metadata import ServiceMetadata, EntityType, EdmxMetadata
 from .ast import (
     Expr, Prop, Literal,
     And, Or, Not,
@@ -30,5 +30,6 @@ __all__ = [
             "L",
             "OrderByItem",
             "ServiceMetadata",
-            "EntityType"
+            "EntityType",
+            "EdmxMetadata"
         ]

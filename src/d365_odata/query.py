@@ -6,9 +6,9 @@ from .metadata import ServiceMetadata
 from .types import OrderByItem, QueryPart
 from .ast import Expr, And, Or
 from .compiler import compile_expr, compile_orderby
-from .validator import validate_query, validate_expr, validate_orderby
+from .validator import validate_query
 from .flatten import flatten_fields, flatten_orderby, flatten_exprs
-from .targets import Target, FromTarget, EntityDefinitionsTarget, MetadataTarget
+from .targets import Target, FromTarget, EntityDefinitionsTarget, MetadataTarget, WhoAmITarget
 
 # ------- Query builder -------- #
 
@@ -48,10 +48,12 @@ class ODataQuery:
         self._target = EntityDefinitionsTarget.create(entity_id=entity_id)
         return self
     
-    def metadata_(
-        self,
-    ) -> "ODataQuery":
+    def metadata_(self) -> "ODataQuery":
         self._target = MetadataTarget.create()
+        return self
+    
+    def whoami_(self) -> "ODataQuery":
+        self._target = WhoAmITarget.create()
         return self
 
     # ------- Select -------- #
@@ -81,6 +83,8 @@ class ODataQuery:
         self._filter = incoming if self._filter is None else Or(self._filter, incoming)
         return self
 
+    # ------- Expand -------- #
+    
     # ------- Aggregate -------- #
     def count_(self, enabled: bool = True) -> "ODataQuery":
         self._count = bool(enabled)

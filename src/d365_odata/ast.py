@@ -100,7 +100,7 @@ class Le:
     right: Expr
 
 
-# String functions (string wildcard placement)
+# String functions
 @dataclass(frozen=True)
 class Contains:
     left: Expr
