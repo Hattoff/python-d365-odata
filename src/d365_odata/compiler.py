@@ -7,8 +7,10 @@ from .ast import (
     And, Or, Not,
     Eq, Ne, Gt, Ge, Lt, Le,
     Contains, StartsWith, EndsWith,
-    Prop, Literal, Expr
+    Prop, Literal, Expr, In_
 )
+
+use_in_operator: bool = False  # default to OR expansion
 
 # ------- Compile to OData -------- #
 
@@ -49,6 +51,9 @@ def compile_expr(expr: Expr) -> str:
         return f"startswith({compile_expr(expr.text)},{compile_expr(expr.prefix)})"
     if isinstance(expr, EndsWith):
         return f"endswith({compile_expr(expr.text)},{compile_expr(expr.suffix)})"
+    
+    if isinstance(expr, In_):
+        return compile_in(expr)
 
     raise TypeError(f"Unknown expression node: {type(expr)!r}")
 
@@ -85,3 +90,19 @@ def compile_orderby(items: Sequence[OrderByItem]) -> str:
         suffix = " desc" if it.desc else " asc"
         chunks.append(f"{it.field}{suffix}")
     return ",".join(chunks)
+
+def compile_in(node: In_) -> str:
+    left = compile_expr(node.left)
+
+    # empty list: choose behavior
+    if not node.options:
+        return "(false)"
+
+    if use_in_operator:
+        # field in (1,2,3)
+        inner = ",".join(compile_expr(v) for v in node.options)
+        return f"({left} in ({inner}))"
+
+    # default: (field eq 1) or (field eq 2) ...
+    parts = [f"({left} eq {compile_expr(v)})" for v in node.options]
+    return f"({' or '.join(parts)})"

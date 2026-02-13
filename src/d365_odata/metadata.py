@@ -2,6 +2,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Any, Optional, List
 import re
+from pathlib import Path
+import xml.etree.ElementTree as ET
+import json
+
+import logging
+logger = logging.getLogger(__name__)
 
 # ------- Metadata Classes -------- #
 
@@ -11,7 +17,6 @@ class EntityType:
     properties: Dict[str, str] 
     """properties: edm type e.g. "Edm.String", "Edm.Int32"""
 
-
 @dataclass(frozen=True)
 class ServiceMetadata:
     entity_sets: Dict[str, str]          # entity_set -> entity_type_name
@@ -38,20 +43,216 @@ class ServiceMetadata:
             raise KeyError(f"Entity type not found for set '{entity_set}': {et_name}")
         return self.entity_types[et_name]
     
+
 # ------- Parse Metadata -------- #
 
-class EdmxMetadata:
-    def __init__(self):
-        # EDMX Namespaces
-        self.EDMX_NS = "http://docs.oasis-open.org/odata/ns/edmx"
-        self.EDM_NS = "http://docs.oasis-open.org/odata/ns/edm"
-        self.NS = {"edmx": self.EDMX_NS, "edm": self.EDM_NS}
-        self._GUID_NAME_RE = re.compile(r"^_(.+?)_value$")
-        """Property cleanup regex for GUIDs"""
-        self._COLLECTION_RE = re.compile(r"^\s*Collection\s*\(\s*(?P<inner>.+?)\s*\)\s*$")
-        """Identify and parse regex for Collection types"""
+class EdmxSourceError(ValueError):
+    """Raised when the EDMX source cannot be loaded or validated."""
 
-    def parse_edmx_file(self, root):
+
+class EdmxMetadata:
+    _GUID_NAME_RE = re.compile(r"^_(.+?)_value$")
+    """Property cleanup regex for GUIDs"""
+    _COLLECTION_RE = re.compile(r"^\s*Collection\s*\(\s*(?P<inner>.+?)\s*\)\s*$")
+    """Identify and parse regex for Collection types"""
+    # EDMX Namespaces
+    _EDMX_NS = "http://docs.oasis-open.org/odata/ns/edmx"
+    _EDM_NS = "http://docs.oasis-open.org/odata/ns/edm"
+    NS = {"edmx": _EDMX_NS, "edm": _EDM_NS}
+
+    _REQUIRED_SCHEMA_KEYS = {
+        "namespace",
+        "alias",
+        "entities",
+        "enums",
+        "entity_set_bindings",
+        "complex_types",
+        "functions"
+    }
+    """required structure of cached metadata"""
+
+    def __init__(self, source: Any):
+        """
+        :param source:
+        source may be:
+          - Path/str to .xml or .json
+          - xml.etree.ElementTree.ElementTree
+          - xml.etree.ElementTree.Element (root)
+          - raw xml text
+          - already-parsed metadata list (optional convenience)
+        :type source: Any
+        """
+        self._metadata: List[Dict[str, Any]] = []
+
+        # Normalize input into metadata (cached JSON) or XML
+        loaded = self._load_source(source)
+
+        if loaded.kind == "json":
+            # Cache it
+            self._metadata = loaded.metadata
+        elif loaded.kind == "xml":
+            # Parse it
+            self._metadata = self._parse_edmx_file(loaded.root)
+        else:
+            # Unknown kind
+            raise EdmxSourceError(f"Unsupported loaded kind: {loaded.kind}")
+
+    @property
+    def metadata(self) -> List[Dict[str, Any]]:
+        return self._metadata
+
+    @dataclass(frozen=True)
+    class _Loaded:
+        kind: str
+        """xml or json"""
+        root: Optional[ET.Element] = None
+        metadata: Optional[List[Dict[str, Any]]] = None
+
+    def _load_source(self, source: Any) -> "EdmxMetadata._Loaded":
+        # ------- Existing metadata list -------- #
+        if isinstance(source, list):
+            # If passed already-parsed metadata list, cache it.
+            self._validate_cached_metadata(source)
+            return self._Loaded(kind="json", metadata=source)
+
+        # ------- ElementTree / Element -------- #
+        if isinstance(source, ET.ElementTree):
+            return self._Loaded(kind="xml", root=source.getroot())
+
+        if isinstance(source, ET.Element):
+            return self._Loaded(kind="xml", root=source)
+        
+        # ------- String-like -------- #
+        if isinstance(source, str):
+            # If it looks like a real path, treat it as path
+            possible_path = Path(source)
+            if possible_path.exists():
+                return self._load_source(possible_path)
+
+            # otherwise treat as raw text
+            return self._load_from_text(source)
+
+        # ------- Path-like -------- #
+        if isinstance(source, (str, Path)):
+            path = Path(source)
+            if not path.exists():
+                raise EdmxSourceError(f"Source file does not exist: {path}")
+
+            suffix = path.suffix.lower()
+            if suffix == ".xml" or suffix == ".edmx":
+                root = self._parse_xml_file(path)
+                return self._Loaded(kind="xml", root=root)
+
+            if suffix == ".json":
+                metadata = self._load_and_validate_json(path)
+                return self._Loaded(kind="json", metadata=metadata)
+
+            raise EdmxSourceError(
+                f"Unsupported file extension '{path.suffix}'. Expected .xml/.edmx or .json."
+            )
+
+        raise EdmxSourceError(
+            "Unsupported source type. Provide a Provide a Path/str/.xml/.json text, "
+            "or an xml.etree.ElementTree.ElementTree/Element."
+        )
+    
+    def _load_from_text(self, text: str) -> "EdmxMetadata._Loaded":
+        text = text.strip()
+        if not text:
+            raise EdmxSourceError("Provided text source is empty.")
+
+        # ------- Try JSON -------- #
+        if text[0] in "{[":
+            try:
+                data = json.loads(text)
+                if isinstance(data, dict):
+                    data = [data]
+                self._validate_cached_metadata(data)
+                return self._Loaded(kind="json", metadata=data)
+            except json.JSONDecodeError:
+                pass
+            except EdmxSourceError:
+                # valid JSON but invalid structure
+                raise
+
+        # ------- Try XML -------- #
+        if text[0] == "<":
+            try:
+                root = ET.fromstring(text)
+                return self._Loaded(kind="xml", root=root)
+            except ET.ParseError as e:
+                raise EdmxSourceError(f"Text looked like XML but failed to parse: {e}") from e
+
+        raise EdmxSourceError(
+            "Text source is neither valid JSON nor XML."
+        )
+
+    
+    def _parse_xml_file(self, path: Path) -> ET.Element:
+        try:
+            tree = ET.parse(path)
+        except ET.ParseError as e:
+            raise EdmxSourceError(f"Invalid XML in '{path}': {e}") from e
+        except OSError as e:
+            raise EdmxSourceError(f"Could not read '{path}': {e}") from e
+
+        root = tree.getroot()
+
+        # Check if file looks like EDMX
+        if root.tag.endswith("Edmx") is False and "edmx" not in root.tag:
+            logger.warning(f"XML from {path} does not look like an EDMX document.")
+            pass
+
+        return root
+
+    def _load_and_validate_json(self, path: Path) -> List[Dict[str, Any]]:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            raise EdmxSourceError(f"Invalid JSON in '{path}': {e}") from e
+        except OSError as e:
+            raise EdmxSourceError(f"Could not read '{path}': {e}") from e
+
+        # Supports either:
+            # list of schema dicts
+            # single schema dict
+        if isinstance(data, dict):
+            data = [data]
+
+        self._validate_cached_metadata(data)
+        return data
+
+    def _validate_cached_metadata(self, data: Any) -> None:
+        if not isinstance(data, list) or not all(isinstance(x, dict) for x in data):
+            raise EdmxSourceError(
+                "Cached metadata JSON must be a list of objects (or a single object)."
+            )
+
+        for i, schema in enumerate(data):
+            missing = self._REQUIRED_SCHEMA_KEYS - set(schema.keys())
+            if missing:
+                raise EdmxSourceError(
+                    f"Cached metadata schema at index {i} is missing keys: {sorted(missing)}"
+                )
+
+            # Light validation of cached metadata
+            for key in ["entities", "enums", "entity_set_bindings", "complex_types", "functions"]:
+                if not isinstance(schema.get(key), dict):
+                    raise EdmxSourceError(
+                        f"Cached metadata schema at index {i}: '{key}' must be an object/dict."
+                    )
+
+            # namespace/alias can be None or str depending the EDMX
+            if schema.get("namespace") is not None and not isinstance(schema["namespace"], str):
+                raise EdmxSourceError(
+                    f"Cached metadata schema at index {i}: 'namespace' must be a string or null."
+                )
+            if schema.get("alias") is not None and not isinstance(schema["alias"], str):
+                raise EdmxSourceError(
+                    f"Cached metadata schema at index {i}: 'alias' must be a string or null."
+                )
+    
+    def _parse_edmx_file(self, root):
         metadata = []
         # Get all schemas
         schemas = root.findall("edmx:DataServices/edm:Schema", self.NS)
@@ -124,7 +325,7 @@ class EdmxMetadata:
                     "base_type": et.get("BaseType"),
                     "abstract": et.get("Abstract"),
                     "open_type": et.get("OpenType"),
-                    "entity_sets": [],
+                    "entity_set_name": None,
                     "attributes": entity_attributes,
                     "navigation_properties": navigation_properties,
                 }
@@ -148,7 +349,7 @@ class EdmxMetadata:
                             "type": param_type,
                             "is_complex": self.type_is_custom(type_str=param_type, alias=schema_alias, custom_types=complex_types_prefetch),
                             "is_enum":  self.type_is_custom(type_str=param_type, alias=schema_alias, custom_types=enum_types_prefetch),
-                            "optional": is_optional,
+                            "is_optional": is_optional,
                         }
 
                 returns = False
@@ -178,8 +379,10 @@ class EdmxMetadata:
                     entity_set_type = self.cleanup_name(name=full_entity_set_type, namespace=schema_namespace, alias=schema_alias)
 
                     if result["entities"].get(entity_set_type):
-                        if entity_set_name not in result["entities"][entity_set_type]["entity_sets"]:
-                            result["entities"][entity_set_type]["entity_sets"].append(entity_set_name)
+                        current_entity_set_name = result["entities"][entity_set_type]["entity_set_name"]
+                        if current_entity_set_name and entity_set_name != current_entity_set_name:
+                            logger.warning(f"Entity {entity_set_type} already had an entity set name, but another was found.\n It was: {current_entity_set_name} It is now: {entity_set_name}.")
+                        result["entities"][entity_set_type]["entity_set_name"] = entity_set_name
 
                     navigation_property_bindings = {}
                     for n in es.findall("edm:NavigationPropertyBinding", self.NS):
@@ -206,11 +409,6 @@ class EdmxMetadata:
     def type_is_custom(self, type_str: str, alias: str, custom_types: List[str]):
         if type_str and type_str.startswith(f"{alias}."):
             clean_type = self.cleanup_name(name=type_str, alias=alias)
-            # is_custom = (clean_type in custom_types)
-            # if (not is_custom) and clean_type.endswith("Code"):
-            #     clean_enum_type = clean_type.removesuffix("Code")
-            #     return (clean_enum_type in custom_types)
-            # return is_custom
             return (clean_type in custom_types)
         return False
     
@@ -240,14 +438,25 @@ class EdmxMetadata:
             print(f"Found more than one key for entity {entity_name} ")
         return keys
     
-    # If the property type is a Guid, the logical name may be of the form _[attribute name]_value; which needs to be removed.
     def normalize_property_name(self, name: str, edm_type: str = None, force: bool = False) -> str:
+        """
+        If the property type is a Guid, the logical name may be of the form _[name]_value; which needs to be removed.
+        
+        :param name: Property name to be normalized
+        :type name: str
+        :param edm_type: Edm.[type]
+        :type edm_type: str
+        :param force: If true, force-use the GUID regex match. Useful if the property is structured like a GUID but not flagged explicitly as Edm.Guid.
+        :type force: bool
+        :return: Returns name from _[name]_value. Otherwise returns unaltered name.
+        :rtype: str
+        """
         if edm_type != "Edm.Guid" and not force:
             return name
         match = self._GUID_NAME_RE.match(name)
         return match.group(1) if match else name
     
-    def check_collection_type(self, type_str):
+    def check_collection_type(self, type_str: str):
         m = self._COLLECTION_RE.match(type_str)
         if m:
             return True, m.group("inner")
@@ -284,11 +493,11 @@ class EdmxMetadata:
     def get_navigation_properties(self, element, entity_name, schema_alias):
         navs = {}
         for np in element.findall("edm:NavigationProperty", self.NS):
-            navigation_property_name = np.get("Partner")
-            if navigation_property_name is None:
-                continue
-
             nav_name = np.get("Name")
+            if not nav_name:
+                continue
+            partner = np.get("Partner")
+
             constraints = []
             for rc in np.findall("edm:ReferentialConstraint", self.NS):
                 from_property_name = rc.get("Property")
@@ -297,7 +506,7 @@ class EdmxMetadata:
                     "from_name": self.normalize_property_name(from_property_name, force=True),
                     "to_name": self.normalize_property_name(to_property_name, force=True),
                     "from_api_name": from_property_name,
-                    "to_api_name": to_property_name,
+                    "to_api_name": to_property_name
                 })
 
             if len(constraints) > 1:
@@ -314,8 +523,8 @@ class EdmxMetadata:
             from_property = constraints[0]['from_name'] if constraints else None
             to_property = constraints[0]['to_name'] if constraints else None
 
-            navs[navigation_property_name] = {
-                "navigation_property_name": navigation_property_name,
+            navs[nav_name] = {
+                "partner": partner,
                 "from_property": from_property,
                 "to_property": to_property,
                 "to_entity_name": to_entity_name,
