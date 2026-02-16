@@ -7,9 +7,9 @@ from .types import OrderByItem, QueryPart
 from .expand import ExpandItem, ExpandQuery
 from .ast import Expr, And, Or
 from .compiler import compile_expr, compile_orderby, compile_expand
-from .validator import validate_query, validate_target, FunctionParamsBuilder
+from .validator import validate_query, validate_target
 from .flatten import flatten_fields, flatten_orderby, flatten_exprs
-from .targets import Target, FromTarget, EntityDefinitionsTarget, EdmxTarget, WhoAmITarget, FunctionTarget
+from .targets import Target, FromTarget, EntityDefinitionsTarget, EdmxTarget, WhoAmITarget
 
 import logging
 logger = logging.getLogger(__name__)
@@ -53,7 +53,7 @@ class ODataQueryBuilder:
 
     # Optional way to implement the metadata while building the query.
     def using_(self, metadata: ServiceMetadata) -> "ODataQueryBuilder":
-        """Set the metadata object to enable more query funtionality like .function_ and query validation."""
+        """Set the metadata object to enable query validation."""
         if self._metadata_lock:
            logger.warning("Attempted to change the metadata on this query builder but the metadata lock prevented the change.")
            return self 
@@ -77,54 +77,7 @@ class ODataQueryBuilder:
         """
         self._target = FromTarget.create(entity_set=entity_set, id=id)
         return self
-
-    def function_(self, api_name: str, **params: Any) -> "ODataQueryBuilder":
-        """
-        #### Query Part:
-         -Target a specific function (**requires** metadata).
-
-        :param api_name: Name of the function exposed to the API.
-        :type api_name: str
-        :param params: Set parameter values by {ParamName}=, _{ParamName}=, or _{paramname}=. Optionally, set function parameters using the .params_ query part.
-        :type params: Any
-        """
-        # if no metadata, we can't resolve aliases safely, so keep as-is.
-        if self._metadata is None:
-            self._target = FunctionTarget.create(api_name, **params)
-            return self
-        
-        fn = self._metadata.function_for_api(api_name)
-        
-        normalized: dict[str, object] = {}
-        for k, v in params.items():
-            real = fn.resolve_param_name(k)
-            if real is None:
-                # raise issue immediately since metadata is present.
-                raise TypeError(
-                    f"Unknown parameter {k!r} for function {fn.api_name!r}. "
-                    f"Valid: {', '.join(sorted(fn.public_param_names()))}"
-                )
-            if real in normalized:
-                raise TypeError(f"Parameter provided more than once (after normalization): {k!r} -> {real!r}")
-            normalized[real] = v
-
-        self._target = FunctionTarget.create(api_name=api_name, **normalized)
-        return self
     
-    @property
-    def params_(self) -> FunctionParamsBuilder:
-        """
-        #### Query Part:
-         -Alternate method of setting function parameter values
-         -Only needs to be called once per query unless the .done_ Query Part was called
-        """
-        if not isinstance(self._target, FunctionTarget):
-            raise AttributeError("params is only available for FunctionTarget queries")
-        if not self._metadata:
-            raise AttributeError("params requires metadata to provide hints")
-        fn = self._metadata.function_for_api(self._target.api_name)
-        return FunctionParamsBuilder(self, fn)
-
     def entitydefinitions_(
         self,
         entity_id: Optional[Any] = None
@@ -133,8 +86,6 @@ class ODataQueryBuilder:
         #### Query Part:
          -Target the hard-coded /EntityDefinitions enpoint.
          -Does **NOT** support any other query parts.
-        #### For query part support:
-         -Use .function_("EntityDefinitions") with metadata.
 
         :param entity_id: Target a specific entity by GUID or logical name.
         :type entity_id: Optional[Any]
@@ -156,7 +107,6 @@ class ODataQueryBuilder:
         #### Query Part:
          -Target the hard-coded /WhoAmI enpoint.
          -Does **NOT** support any other query parts.
-         -For query part support, use .function_("WhoAmI") with metadata.
         """
         self._target = WhoAmITarget.create()
         return self
@@ -296,7 +246,6 @@ class ODataQueryBuilder:
             present.add(QueryPart.EXPAND)
         return present
 
-
     def _enforce_allowed_parts(self, target: Target) -> None:
         if QueryPart.__ANY__ in target.allowed_parts:
             return
@@ -338,7 +287,6 @@ class ODataQueryBuilder:
             parts.append("$top=" + str(self._top))
         if self._expand:
             parts.append("$expand=" + compile_expand(self._expand))
-
 
         base = self._target.to_path()
         return base + (("?" + "&".join(parts)) if parts else "")

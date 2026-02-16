@@ -5,7 +5,6 @@ import re
 from pathlib import Path
 import xml.etree.ElementTree as ET
 import json
-from .types import FunctionDef, FunctionParam
 
 import logging
 logger = logging.getLogger(__name__)
@@ -23,8 +22,6 @@ class ServiceMetadata:
     """maps entity sets to entities"""
     entity_types: Dict[str, EntityType]
     """maps entities to EntityType objects"""
-    functions: Dict[str, FunctionDef] = None
-    """maps functions to FunctionDef objects"""
 
     def entity_type_for_set(self, entity_set: str) -> EntityType:
         if entity_set not in self.entity_sets:
@@ -33,12 +30,6 @@ class ServiceMetadata:
         if et_name not in self.entity_types:
             raise KeyError(f"Entity type not found for set '{entity_set}': {et_name}")
         return self.entity_types[et_name]
-    
-    def function_for_api(self, api_name: str) -> FunctionDef:
-        if not self.functions or api_name not in self.functions:
-            raise KeyError(f"Unknown function: {api_name}")
-        return self.functions[api_name]
-    
 
 def service_metadata_from_parsed_edmx(parsed: list[dict]) -> ServiceMetadata:
     # for now just go with the default schema
@@ -55,29 +46,9 @@ def service_metadata_from_parsed_edmx(parsed: list[dict]) -> ServiceMetadata:
         props = {pname: pinfo["type"] for pname, pinfo in e["attributes"].items()}
         entity_types[ename] = EntityType(name=ename, properties=props)
 
-    functions = {}
-    for fname, f in schema["functions"].items():
-        api_name = f["api_name"] or fname
-        params = {
-            pn: FunctionParam(
-                name=pn,
-                edm_type=p["type"],
-                is_optional=p["is_optional"],
-            )
-            for pn, p in f["parameters"].items()
-        }
-        functions[api_name] = FunctionDef(
-            name=fname,
-            api_name=api_name,
-            params=params,
-            returns=bool(f["returns"]),
-            return_type=f["return_type"],
-        )
-
     return ServiceMetadata(
         entity_sets=entity_sets,
         entity_types=entity_types,
-        functions=functions,
     )
 
     
@@ -87,6 +58,14 @@ class EdmxSourceError(ValueError):
     """Raised when the EDMX source cannot be loaded or validated."""
 
 class EdmxMetadata:
+    # Caches of entity, entity-sets, complex types, and enums per schema.
+    _entity_names: Dict[str, List[str]] = {}
+    _enum_names: Dict[str, List[str]] = {}
+    _entity_set_names: Dict[str, List[str]] = {}
+    _complex_type_names: Dict[str, List[str]] = {}
+   
+    
+
     _GUID_NAME_RE = re.compile(r"^_(.+?)_value$")
     """Property cleanup regex for GUIDs"""
     _COLLECTION_RE = re.compile(r"^\s*Collection\s*\(\s*(?P<inner>.+?)\s*\)\s*$")
@@ -101,7 +80,6 @@ class EdmxMetadata:
         "alias",
         "entities",
         "enums",
-        "entity_set_bindings",
         "complex_types",
         "functions"
     }
@@ -269,7 +247,7 @@ class EdmxMetadata:
                 )
 
             # Light validation of cached metadata
-            for key in ["entities", "enums", "entity_set_bindings", "complex_types", "functions"]:
+            for key in ["entities", "enums", "entity_sets", "complex_types"]:
                 if not isinstance(schema.get(key), dict):
                     raise EdmxSourceError(
                         f"Cached metadata schema at index {i}: '{key}' must be an object/dict."
@@ -293,25 +271,43 @@ class EdmxMetadata:
         for schema in schemas:
             schema_namespace = schema.get("Namespace")
             schema_alias = schema.get("Alias")
+            self._entity_names[schema_alias] = []
+            self._enum_names[schema_alias] = []
+            self._entity_set_names[schema_alias] = []
+            self._complex_type_names[schema_alias] = []
+
+
             result = {
                 "namespace": schema_namespace,
                 "alias": schema_alias,
-                "entities": {},
-                "enums": {},
-                "entity_set_bindings": {},
-                "complex_types": {},
-                "functions": {}
+                "entities": {}, # EntityTypes (aka entities) store raw data in the system and can be exposed to the API via EntitySets.
+                "enums": {}, # EnumTypes are system-level enumerators. They can be decoded using special calls to ([NAMESPACE].[ENUM NAME] 'enum_string') -> enum_int
+                "entity_sets": {}, # EntitySets expose entities and special navigation properties to the API. e.g. the EntityDefinitions entity-set returns 
+                "complex_types": {} # ComplexTypes are Entity-like structures which lack a key. They are often a special collection populated by a function or action. e.g. The WhoAmI function returns the complex type WhoAmIResponse.
             }
 
-            complex_types_prefetch = []
+            # Get a list of names of all entities, entity-sets, enums, and complex types early on to help with property classification.
             for ct in schema.findall("edm:ComplexType", self.NS):
                 complex_type_name = ct.get("Name")
-                complex_types_prefetch.append(complex_type_name)
+                if complex_type_name and complex_type_name not in self._complex_type_names[schema_alias]:
+                    self._complex_type_names[schema_alias].append(complex_type_name)
 
-            enum_types_prefetch = []
             for em in schema.findall("edm:EnumType", self.NS):
                 enum_name = em.get("Name")
-                enum_types_prefetch.append(enum_name)
+                if enum_name and enum_name not in self._enum_names[schema_alias]:
+                    self._enum_names[schema_alias].append(enum_name)
+
+            for et in schema.findall("edm:EntityType", self.NS):
+                entity_name = et.get("Name")
+                if entity_name and entity_name not in self._entity_names[schema_alias]:
+                    self._entity_names[schema_alias].append(entity_name)
+
+            if entity_containers := schema.findall("edm:EntityContainer", self.NS):
+                entity_container = entity_containers[0]
+                for es in entity_container.findall("edm:EntitySet", self.NS):
+                    entity_set_name = es.get("Name")
+                    if entity_set_name and entity_set_name not in self._entity_set_names[schema_alias]:
+                        self._entity_set_names[schema_alias].append(entity_set_name)
 
             # ------- Complex Types -------- #
             for ct in schema.findall("edm:ComplexType", self.NS):
@@ -319,7 +315,7 @@ class EdmxMetadata:
                 complex_base_type = ct.get("BaseType", None)
                 result["complex_types"][complex_type_name] = {
                     "base_type": complex_base_type,
-                    "properties": self.get_properties(ct, schema_alias, complex_types=complex_types_prefetch, enum_types=enum_types_prefetch)
+                    "properties": self.get_properties(element=ct, namespace=schema_namespace, alias=schema_alias)
                 }
 
             # ------- Enums -------- #
@@ -349,59 +345,26 @@ class EdmxMetadata:
 
                 if entity_edm:
                     entity_keys = self.get_entity_keys(entity_edm, entity_name)
-                    entity_attributes = self.get_properties(entity_edm, schema_alias, complex_types=complex_types_prefetch, enum_types=enum_types_prefetch)   
-                    navigation_properties = self.get_navigation_properties(entity_edm, entity_name, schema_alias)
+                    entity_attributes = self.get_properties(element=entity_edm, namespace=schema_namespace, alias=schema_alias)
+                    navigation_properties = self.get_navigation_properties(entity_edm, entity_name, namespace=schema_namespace, alias=schema_alias)
+
+                base_type = et.get("BaseType")
+                base_type_info = self.get_type_info(type_str=base_type, namespace=schema_namespace, alias=schema_alias)
 
                 entity = {
-                    "name": entity_name,
+                    # "name": entity_name, # No need to repeat
                     "primary_key": entity_keys[0] if entity_keys else None,
-                    "base_type": et.get("BaseType"),
-                    "abstract": et.get("Abstract"),
-                    "open_type": et.get("OpenType"),
-                    "entity_set_name": None,
+                    "base_type": base_type_info.get("stripped_type"),
+                    "full_base_type": base_type,
+                    "base_type_element": base_type_info.get("type_element"),
+                    "abstract": bool(et.get("Abstract",False)), # Abstract entities allow for property inheritance. Most abstract entities are not exposed to the API via EntitySets, but some are (ActivityPointer, RelationshipMetadataBase).
+                    # "open_type": et.get("OpenType"), # Remove this for now, Only one entity, "expando", is open type.
+                    "entity_set_name": None, # If entity set name is missing it means it is not exposed to the API.
                     "attributes": entity_attributes,
-                    "navigation_properties": navigation_properties,
+                    "navigation_properties": navigation_properties, # Navigation properties can be referenced by name to expand that attribute.
                 }
 
                 result["entities"][entity_name] = entity
-
-            # ------- Functions -------- #
-            for fn in schema.findall("edm:Function", self.NS):
-                function_name = fn.get("Name")
-                parameters = {}
-                for p in fn.findall("edm:Parameter", self.NS):
-                    param_name = p.get("Name")
-                    param_type = p.get("Type")
-                    if param_name and param_type:
-                        is_optional = False
-                        for annotation in p.findall("edm:Annotation", self.NS):
-                            if "OptionalParameter" in (annotation.get("Term","") or ""):
-                                is_optional = True
-                                break
-                        parameters[param_name] = {
-                            "type": param_type,
-                            "is_complex": self.type_is_custom(type_str=param_type, alias=schema_alias, custom_types=complex_types_prefetch),
-                            "is_enum":  self.type_is_custom(type_str=param_type, alias=schema_alias, custom_types=enum_types_prefetch),
-                            "is_optional": is_optional,
-                        }
-
-                returns = False
-                return_type = None
-                if return_types := fn.findall("edm:ReturnType", self.NS):
-                    returns = True
-                    full_return_type = return_types[0].get("Type",None)
-                    return_type = self.cleanup_name(name=full_return_type, namespace=schema_namespace, alias=schema_alias)
-
-                func = {
-                    "is_api_function": False,
-                    "api_name": None,
-                    "parameters": parameters,
-                    "returns": returns,
-                    "return_type": return_type
-                }
-
-                result["functions"][function_name] = func
-
             
             if entity_containers := schema.findall("edm:EntityContainer", self.NS):
                 # ------- Entity Sets -------- #
@@ -424,17 +387,7 @@ class EdmxMetadata:
                         if set_path and set_target:
                             navigation_property_bindings[set_path] = set_target
 
-                    result["entity_set_bindings"][entity_set_name] = navigation_property_bindings
-
-                # ------- API Functions -------- #
-                for af in entity_container.findall("edm:FunctionImport", self.NS):
-                    function_api_name = af.get("Name")
-                    full_function_type = af.get("Function")
-                    function_type = self.cleanup_name(name=full_function_type, namespace=schema_namespace, alias=schema_alias)
-
-                    if result["functions"].get(function_type):
-                        result["functions"][function_type]["is_api_function"] = True
-                        result["functions"][function_type]["api_name"] = function_api_name
+                    result["entity_sets"][entity_set_name] = navigation_property_bindings
 
             metadata.append(result)
         return metadata
@@ -457,7 +410,7 @@ class EdmxMetadata:
         if alias and name.startswith(alias + "."):
             clean_name = name.removeprefix(alias + ".")
             return clean_name
-        
+            
         return name
     
     # Get key elements
@@ -495,35 +448,60 @@ class EdmxMetadata:
             return True, m.group("inner")
         return False, None
     
+    def get_type_info(self, type_str: str, namespace, alias):
+        if not type_str:
+            return {}
+        
+        is_collection, collection_type = self.check_collection_type(type_str)
+        actual_type_str = collection_type if is_collection is True and collection_type else type_str
+
+        stripped_type_str = self.cleanup_name(name=actual_type_str, namespace=namespace, alias=alias)
+
+        if stripped_type_str.startswith("Edm."):
+            type_element = "edm"
+            # Remove Edm indicator for stripped version
+            stripped_type_str = stripped_type_str.removeprefix("Edm.")
+        elif stripped_type_str in self._enum_names[alias]:
+            type_element = "enum_type"
+        elif stripped_type_str in self._entity_names[alias]:
+            # It is rare (and annoying) but you can have EntitySets with the same name as their corresponding EntityType. Check for EntityType first if that is the case.
+            type_element = "entity_type"
+        elif stripped_type_str in self._entity_set_names[alias]:
+            type_element = "entity_set"
+        elif stripped_type_str in self._complex_type_names[alias]:
+            type_element = "complex_type"
+        else:
+            type_element = None
+            
+        return {
+            "stripped_type": stripped_type_str,
+            "is_collection": is_collection,
+            "type_element": type_element
+    }
+    
+    
     # Get the properties of a given element
-    def get_properties(self, element, schema_alias, complex_types, enum_types):
+    def get_properties(self, element, namespace, alias):
         all_props = {}
         for p in element.findall("edm:Property", self.NS):
             property_name = p.get("Name")
             property_type = p.get("Type")
-            is_collection, collection_type = self.check_collection_type(property_type)
-            if is_collection:
-                is_complex = self.type_is_custom(type_str=collection_type, alias=schema_alias, custom_types=complex_types)
-                is_enum = self.type_is_custom(type_str=collection_type, alias=schema_alias, custom_types=enum_types)
-            else:
-                is_complex = self.type_is_custom(type_str=property_type, alias=schema_alias, custom_types=complex_types)
-                is_enum = self.type_is_custom(type_str=property_type, alias=schema_alias, custom_types=enum_types)
-                
+            type_info = self.get_type_info(type_str=property_type, namespace=namespace, alias=alias)
+
             normalized_name = self.normalize_property_name(property_name, property_type)
             property = {
-                "logical_name": self.normalize_property_name(property_name, property_type),
+                # "logical_name": self.normalize_property_name(property_name, property_type), # No need to repeat this.
                 "api_name":property_name,
-                "type": property_type,
-                "is_complex": is_complex,
-                "is_enum": is_enum,
-                "is_collection": is_collection,
-                "collection_type": collection_type
+                "type": type_info.get("stripped_type"),
+                "full_type": property_type,
+                "is_collection": type_info.get("is_collection"),
+                "type_element": type_info.get("type_element")
             }
             all_props[normalized_name] = property
         return all_props
     
     # Get EntityType Navigation Properties. These are used in $expand odata queries.
-    def get_navigation_properties(self, element, entity_name, schema_alias):
+    def get_navigation_properties(self, element, entity_name, namespace, alias):
         navs = {}
         for np in element.findall("edm:NavigationProperty", self.NS):
             nav_name = np.get("Name")
@@ -546,22 +524,27 @@ class EdmxMetadata:
                 print(f"Found more than one constraint for {entity_name} on property {nav_name}")
             
             nav_type = np.get("Type")
-            if schema_alias is not None and schema_alias != "":
-                _alias_re = re.compile(r"^" + schema_alias + r"\.([^\.]+?)$")
-                match = _alias_re.match(nav_type)
-                to_entity_name = match.group(1) if match else nav_type
-            else:
-                to_entity_name = nav_type
+            nav_type_info = self.get_type_info(type_str=nav_type, namespace=namespace, alias=alias)
+
+
+            # if schema_alias is not None and schema_alias != "":
+            #     _alias_re = re.compile(r"^" + schema_alias + r"\.([^\.]+?)$")
+            #     match = _alias_re.match(nav_type)
+            #     to_entity_name = match.group(1) if match else nav_type
+            # else:
+            #     to_entity_name = nav_type
             
             from_property = constraints[0]['from_name'] if constraints else None
             to_property = constraints[0]['to_name'] if constraints else None
-
+                        
             navs[nav_name] = {
-                "partner": partner,
+                "partner": partner, # Name of the reciprocal relationship
                 "from_property": from_property,
                 "to_property": to_property,
-                "to_entity_name": to_entity_name,
-                "to_entity_base_type": nav_type,
-                "nullable": np.get("Nullable"),
+                "to_entity_type": (nav_type_info.get("stripped_type") or nav_type),
+                "to_entity_full_type": nav_type,
+                "to_entity_is_collection": nav_type_info.get("is_collection"),
+                # "to_entity_type_element": nav_type_info.get("type_element") # This is not necessary. All navigation properties seem to target EntityTypes directly.
+                # "nullable": (np.get("Nullable", True) or True), # Don't think we will need this.
             }
         return navs

@@ -12,6 +12,7 @@ class Target(Protocol):
     Anything that has allowed_parts and to_path() will be classified as a Target.
     """
     allowed_parts: FrozenSet[QueryPart]
+    validate_requires_metadata: bool
     def to_path(self) -> str:
         pass
 
@@ -24,34 +25,10 @@ class BaseTarget:
     """
     allowed_parts: FrozenSet[QueryPart]
     """allowed_parts must be overridden"""
+    validate_requires_metadata: bool
 
     def to_path(self) -> str:
         raise NotImplementedError
-
-@dataclass(frozen=True)
-class FunctionTarget(BaseTarget):
-    api_name: str
-    params: Mapping[str, Any]
-    """raw values that the validator can check"""
-
-    @staticmethod
-    def create(api_name: str, **params: Any) -> "FunctionTarget":
-        return FunctionTarget(
-            allowed_parts=frozenset({
-                QueryPart.SELECT, QueryPart.FILTER, QueryPart.ORDERBY,
-                QueryPart.SKIP, QueryPart.TOP, QueryPart.COUNT, QueryPart.EXPAND
-            }),
-            api_name=api_name,
-            params=params,
-        )
-
-    def to_path(self) -> str:
-        # OData function invocation style: /FunctionName(p1=v1,p2=v2)
-        # For now: render naive; validator/compiler later can handle correct quoting.
-        if not self.params:
-            return f"/{self.api_name}()"
-        inner = ",".join(f"{k}={v}" for k, v in self.params.items())
-        return f"/{self.api_name}({inner})"
 
 @dataclass(frozen=True)
 class FromTarget(BaseTarget):
@@ -64,6 +41,7 @@ class FromTarget(BaseTarget):
         if id is not None and not _is_guid(id):
             raise ValueError(f"Invalid GUID for entity id: {id!r}")
         return FromTarget(
+            validate_requires_metadata=True,
             allowed_parts=frozenset({
                 QueryPart.SELECT, QueryPart.FILTER, QueryPart.ORDERBY,
                 QueryPart.SKIP, QueryPart.TOP, QueryPart.COUNT, QueryPart.EXPAND
@@ -98,6 +76,7 @@ class EntityDefinitionsTarget(BaseTarget):
                 logical_name = entity_id
 
         return EntityDefinitionsTarget(
+            validate_requires_metadata=False,
             allowed_parts=frozenset({QueryPart.SELECT}),
             logical_name=logical_name,
             id=id,
@@ -120,6 +99,7 @@ class EdmxTarget(BaseTarget):
     @staticmethod
     def create() -> "EdmxTarget":
         return EdmxTarget(
+            validate_requires_metadata=False,
             allowed_parts=frozenset({QueryPart.__NONE__})
         )
 
@@ -134,6 +114,7 @@ class WhoAmITarget(BaseTarget):
     @staticmethod
     def create() -> "WhoAmITarget":
         return WhoAmITarget(
+            validate_requires_metadata=False,
             allowed_parts=frozenset({QueryPart.__NONE__})
         )
 
