@@ -270,7 +270,8 @@ class ODataQueryBuilder:
         self._enforce_allowed_parts(self._target)
 
         if validate:
-            validate_target(self, self._metadata)
+            validate_query(self)
+            validate_target(self)
 
         parts = []
         if self._select:

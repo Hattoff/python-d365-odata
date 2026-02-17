@@ -54,6 +54,10 @@ class FromTarget(BaseTarget):
         if self.id:
             return f"/{self.entity_set}({_normalize_guid(self.id)})"
         return f"/{self.entity_set}"
+    
+    def _force_update_entity_set(self, val) -> None:
+        # Bit of an anti-pattern but this is for the validator to use.
+        object.__setattr__(self, 'entity_set', val)
 
 @dataclass(frozen=True)
 class EntityDefinitionsTarget(BaseTarget):

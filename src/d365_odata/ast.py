@@ -105,7 +105,7 @@ def _coerce_literal_numeric(x: Any) -> Expr:
 
 
 @dataclass(frozen=True, init=False)
-class CoercingBinary(Expr):
+class _CoercingBinary(Expr):
     left: Expr
     right: Expr
 
@@ -124,7 +124,7 @@ class CoercingBinary(Expr):
 
 
 @dataclass(frozen=True, init=False)
-class StrictBinary(Expr):
+class _StrictBinary(Expr):
     left: Expr
     right: Expr
     def __init__(self, left: Expr, right: Expr):
@@ -136,7 +136,6 @@ class StrictBinary(Expr):
             )
         object.__setattr__(self, "left", left)
         object.__setattr__(self, "right", right)
-
 
 @dataclass(frozen=True)
 class And(Expr):
@@ -192,37 +191,37 @@ class Not(Expr):
 
 # Comparison predicates
 @dataclass(frozen=True, init=False)
-class Eq(CoercingBinary):
+class Eq(_CoercingBinary):
     pass
 
 
 @dataclass(frozen=True, init=False)
-class Ne(CoercingBinary):
+class Ne(_CoercingBinary):
     pass
 
 
 @dataclass(frozen=True, init=False)
-class Gt(CoercingBinary):
+class Gt(_CoercingBinary):
     pass
 
 
 @dataclass(frozen=True, init=False)
-class Ge(CoercingBinary):
+class Ge(_CoercingBinary):
     pass
 
 
 @dataclass(frozen=True, init=False)
-class Lt(CoercingBinary):
+class Lt(_CoercingBinary):
     pass
 
 
 @dataclass(frozen=True, init=False)
-class Le(CoercingBinary):
+class Le(_CoercingBinary):
     pass
 
 # String functions
 @dataclass(frozen=True, init=False)
-class Contains(CoercingBinary):
+class Contains(_CoercingBinary):
     @property
     def haystack(self) -> Expr:
         """haystack: left"""
@@ -234,7 +233,7 @@ class Contains(CoercingBinary):
         return self.right
 
 @dataclass(frozen=True, init=False)
-class StartsWith(CoercingBinary):
+class StartsWith(_CoercingBinary):
     @property
     def text(self) -> Expr:
         """text: left"""
@@ -246,7 +245,7 @@ class StartsWith(CoercingBinary):
         return self.right
 
 @dataclass(frozen=True, init=False)
-class EndsWith(CoercingBinary):
+class EndsWith(_CoercingBinary):
     @property
     def text(self) -> Expr:
         """text: left"""

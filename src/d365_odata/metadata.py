@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Any, Optional, List, Tuple
+from collections.abc import Iterable as IterableABC
 import re
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -27,6 +28,7 @@ class ServiceMetadata:
     """maps entities to EntityType objects"""
     entities: Dict[str, Any]
     enums: Dict[str, Any]
+    complex_types: Dict[str, Any]
 
     def entity_type_for_set(self, entity_set: str) -> EntityType:
         if entity_set not in self.entity_sets:
@@ -37,6 +39,61 @@ class ServiceMetadata:
         return self.entity_types[et_name]
     
 
+    def get_attribute(self, attribute_name: str, *, entity: Optional[Dict[str, Any]] = None, entity_name: Optional[str] = None) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        return self._get_entity_prop("attributes", attribute_name, entity=entity, entity_name=entity_name)
+
+    def get_navigation_property(self, navigation_property_name: str, *, entity: Optional[Dict[str, Any]] = None, entity_name: Optional[str] = None) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        return self._get_entity_prop("navigation_properties", navigation_property_name, entity=entity, entity_name=entity_name)
+    
+    def _get_entity_prop(
+            self,
+            prop_type: str,
+            prop_name: str,
+            *,
+            entity: Optional[Dict[str, Any]] = None,
+            entity_name: Optional[str] = None
+        ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        """
+        Generalized to fetch values from iterable objects on the Entity.
+        
+        :param prop_type: Name of the iterable object found on the entity. If the object is not iterable then this will return nothing.
+        :type prop_type: str
+        :param prop_name: Name of the item in within the iterable object.
+        :type prop_name: str
+        :param entity: Entity object to search.
+        :type entity: Optional[Dict[str, Any]]
+        :param entity_name: Name of the entity. Will use get_entity to resolve.
+        :type entity_name: Optional[str]
+        :return: Return the item by the name provided and the actual name of that item, if they exist. Otherwise return None, None.
+        :rtype: Tuple[Dict[str, Any] | None, str | None]
+        """
+        options = [entity, entity_name]
+        selected_options = list(filter(lambda o: o is not None, options))
+        if len(selected_options) != 1:
+            raise ValueError(f"Expected only one of the following [entity, entity_name] but got {len(selected_options)}.")
+        
+        if not isinstance(prop_name, str):
+            try:
+                prop_name = str(prop_name)
+            except:
+                raise ValueError(f"Expected the name to be a string. Got {type(prop_name)} whcih cannot be converted to a string.")
+
+        if entity_name is not None:
+            entity, _ = self.get_entity(entity_name)
+        
+        if entity is None:
+            return None, None
+
+        if props:= entity.get(prop_type):
+            if isinstance(props, IterableABC) and (not isinstance(props, str)):
+                if prop_name in props:
+                    return props[prop_name], prop_name
+
+                prop, actual_prop_name = _find_case_insensitive(prop_name, props)
+                if prop:
+                    return prop, actual_prop_name
+        return None, None
+        
     def get_entity(self, name: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         """
         Search for an entity by name and return it.
@@ -68,6 +125,37 @@ class ServiceMetadata:
         
         return None, None
     
+    def ensure_entity_set_name(self, name: str) -> Optional[str]:
+        """
+        Ensure the name used is the proper entity set name.
+        
+        :param name: Check if name is already an entity_set name, if not it will check for entity name; will also check case-insensitive variants.
+        :type name: str
+        :return: Correct variant of the entity set name.
+        :rtype: Dict[str, Any]
+        """
+
+        entity_name, actual_entity_set_name = _find_case_insensitive(name, self.entity_sets)
+        if entity_name:
+            return actual_entity_set_name
+        
+        entity, entity_name = _find_case_insensitive(name, self.entities)
+        if entity:
+            return entity.get("entity_set_name", None)
+        
+        return None
+    
+    def get_complex_type(self, name: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        if complex_type := self.complex_types.get(name):
+            # direct name match
+            return complex_type, name
+        
+        complex_type, complex_type_name = _find_case_insensitive(name, self.complex_types)
+        if complex_type:
+            # case-insensitive name match
+            return complex_type, complex_type_name
+        return None, None
+
     def get_enum(self, name: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         if enum := self.enums.get(name):
             # direct name match
@@ -163,7 +251,8 @@ def service_metadata_from_parsed_edmx(parsed: list[dict]) -> ServiceMetadata:
         entity_sets=entity_sets,
         entity_types=entity_types,
         entities=schema["entities"],
-        enums=schema["enums"]
+        enums=schema["enums"],
+        complex_types=schema["complex_types"]
     )
 
     
@@ -425,8 +514,11 @@ class EdmxMetadata:
             for ct in schema.findall("edm:ComplexType", self.NS):
                 complex_type_name = ct.get("Name")
                 complex_base_type = ct.get("BaseType", None)
+                complex_base_type_info = self.get_type_info(type_str=complex_base_type, namespace=schema_namespace, alias=schema_alias)
                 result["complex_types"][complex_type_name] = {
-                    "base_type": complex_base_type,
+                    "base_type": complex_base_type_info.get("stripped_type"),
+                    "full_base_type": complex_base_type,
+                    "base_type_element": complex_base_type_info.get("type_element"),
                     "properties": self.get_properties(element=ct, namespace=schema_namespace, alias=schema_alias)
                 }
 
