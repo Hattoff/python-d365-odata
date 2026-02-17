@@ -1,10 +1,11 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 import re
 from pathlib import Path
 import xml.etree.ElementTree as ET
 import json
+from .utilities import _find_case_insensitive
 
 import logging
 logger = logging.getLogger(__name__)
@@ -18,10 +19,14 @@ class EntityType:
 
 @dataclass(frozen=True)
 class ServiceMetadata:
+    schema_namespace: str
+    schema_alias: str
     entity_sets: Dict[str, str]
     """maps entity sets to entities"""
     entity_types: Dict[str, EntityType]
     """maps entities to EntityType objects"""
+    entities: Dict[str, Any]
+    enums: Dict[str, Any]
 
     def entity_type_for_set(self, entity_set: str) -> EntityType:
         if entity_set not in self.entity_sets:
@@ -30,6 +35,112 @@ class ServiceMetadata:
         if et_name not in self.entity_types:
             raise KeyError(f"Entity type not found for set '{entity_set}': {et_name}")
         return self.entity_types[et_name]
+    
+
+    def get_entity(self, name: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        """
+        Search for an entity by name and return it.
+        
+        :param name: Check if name is an entity name, if not it will check entity_set names; will also check case-insensitive variants.
+        :type name: str
+        :return: Entity info and list of properties
+        :rtype: Dict[str, Any]
+        """
+        if entity := self.entities.get(name):
+            # direct name match
+            return entity, name
+        
+        if entity_name := self.entity_sets.get(name):
+            if entity := self.entities.get(entity_name):
+                # entity_set name match
+                return entity, entity_name
+            
+        entity_name, _ = _find_case_insensitive(name, self.entity_sets)
+        if entity_name:
+            if entity := self.entities.get(entity_name):
+                # case-insensitive entity_set name match
+                return entity, entity_name
+            
+        entity, entity_name = _find_case_insensitive(name, self.entities)
+        if entity:
+            # case-insensitive entity name match
+            return entity, entity_name
+        
+        return None, None
+    
+    def get_enum(self, name: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        if enum := self.enums.get(name):
+            # direct name match
+            return enum, name
+        
+        enum, enum_name = _find_case_insensitive(name, self.enums)
+        if enum:
+            # case-insensitive name match
+            return enum, enum_name
+        return None, None
+    
+    def get_enum_info(
+            self,
+            enum_name: str,
+            *,
+            enum_variable: Optional[str] = None,
+            enum_member: Optional[str] = None,
+            enum_value: Optional[str] = None
+        ) -> Optional[Dict[str, str]]:
+        """
+        Lookup an enum by name and value, return a complete set of information for that member.
+        
+        :param enum_name: Enumerator name. Will search case-insensitive if needed.
+        :type enum_name: str
+        :param enum_variable: Use if you are unsure if you have the member name or value. Will search member names first, then values.
+        :type enum_variable: Optional[str]
+        :param enum_member: Search member names. Will search case-insensitive if needed.
+        :type enum_member: Optional[str]
+        :param enum_value: Search enum values for the member name. Will cast value to string if needed.
+        :type enum_value: Optional[str]
+        :return: Enumerator information -> Enum Path: [Schema Namespace].[Enum Name], Enum Member, Enum Value, Enum Is Flags (enum values combine using bitwise-or)
+        :rtype: Dict[str, str] | None
+        """
+        options = [enum_variable, enum_member, enum_value]
+        selected_options = list(filter(lambda o: o is not None, options))
+        if len(selected_options) != 1:
+            raise ValueError(f"Expected only one of the following [enum_variable, enum_member, enum_value] but got {len(selected_options)}.")
+
+        enum, actual_enum_name = self.get_enum(enum_name)
+        enum_member_name = None
+        if enum is not None:
+            members = (enum.get("members",{}) or {})
+            target_member = enum_variable if enum_variable is not None else enum_member
+            if target_member is not None:
+                if target_member in members:
+                    enum_member_name = target_member
+                else:
+                    member, actual_target_member = _find_case_insensitive(str(target_member), members)
+                    if member:
+                        enum_member_name = actual_target_member
+
+            if enum_member_name is None:
+                target_value = enum_variable if enum_variable is not None else enum_value
+                if target_value is not None:
+                    try:
+                        enum_member_name = list(members.keys())[list(members.values()).index(target_value)]
+                    except:
+                        try:
+                            enum_member_name = list(members.keys())[list(members.values()).index(str(target_value))]
+                        except:
+                            pass
+
+            if enum_val := members.get(enum_member_name):
+                return {
+                    "enum_path": f"{self.schema_namespace}.{actual_enum_name}",
+                    "enum_member": enum_member_name,
+                    "enum_value": enum_val,
+                    "enum_is_flags": enum.get("enum_is_flags")
+                }
+        
+        return None
+            
+
 
 def service_metadata_from_parsed_edmx(parsed: list[dict]) -> ServiceMetadata:
     # for now just go with the default schema
@@ -47,8 +158,12 @@ def service_metadata_from_parsed_edmx(parsed: list[dict]) -> ServiceMetadata:
         entity_types[ename] = EntityType(name=ename, properties=props)
 
     return ServiceMetadata(
+        schema_namespace=schema["namespace"],
+        schema_alias=schema["alias"],
         entity_sets=entity_sets,
         entity_types=entity_types,
+        entities=schema["entities"],
+        enums=schema["enums"]
     )
 
     
@@ -64,8 +179,6 @@ class EdmxMetadata:
     _entity_set_names: Dict[str, List[str]] = {}
     _complex_type_names: Dict[str, List[str]] = {}
    
-    
-
     _GUID_NAME_RE = re.compile(r"^_(.+?)_value$")
     """Property cleanup regex for GUIDs"""
     _COLLECTION_RE = re.compile(r"^\s*Collection\s*\(\s*(?P<inner>.+?)\s*\)\s*$")
@@ -80,8 +193,7 @@ class EdmxMetadata:
         "alias",
         "entities",
         "enums",
-        "complex_types",
-        "functions"
+        "complex_types"
     }
     """required structure of cached metadata"""
 
@@ -352,13 +464,11 @@ class EdmxMetadata:
                 base_type_info = self.get_type_info(type_str=base_type, namespace=schema_namespace, alias=schema_alias)
 
                 entity = {
-                    # "name": entity_name, # No need to repeat
                     "primary_key": entity_keys[0] if entity_keys else None,
                     "base_type": base_type_info.get("stripped_type"),
                     "full_base_type": base_type,
                     "base_type_element": base_type_info.get("type_element"),
                     "abstract": bool(et.get("Abstract",False)), # Abstract entities allow for property inheritance. Most abstract entities are not exposed to the API via EntitySets, but some are (ActivityPointer, RelationshipMetadataBase).
-                    # "open_type": et.get("OpenType"), # Remove this for now, Only one entity, "expando", is open type.
                     "entity_set_name": None, # If entity set name is missing it means it is not exposed to the API.
                     "attributes": entity_attributes,
                     "navigation_properties": navigation_properties, # Navigation properties can be referenced by name to expand that attribute.
@@ -464,7 +574,8 @@ class EdmxMetadata:
         elif stripped_type_str in self._enum_names[alias]:
             type_element = "enum_type"
         elif stripped_type_str in self._entity_names[alias]:
-            # It is rare (and annoying) but you can have EntitySets with the same name as their corresponding EntityType. Check for EntityType first if that is the case.
+            # It is rare (and annoying) but you can have EntitySets with the same name as their corresponding EntityType.
+            # Check for EntityType first if that is the case.
             type_element = "entity_type"
         elif stripped_type_str in self._entity_set_names[alias]:
             type_element = "entity_set"
@@ -490,7 +601,6 @@ class EdmxMetadata:
 
             normalized_name = self.normalize_property_name(property_name, property_type)
             property = {
-                # "logical_name": self.normalize_property_name(property_name, property_type), # No need to repeat this.
                 "api_name":property_name,
                 "type": type_info.get("stripped_type"),
                 "full_type": property_type,
@@ -525,14 +635,6 @@ class EdmxMetadata:
             
             nav_type = np.get("Type")
             nav_type_info = self.get_type_info(type_str=nav_type, namespace=namespace, alias=alias)
-
-
-            # if schema_alias is not None and schema_alias != "":
-            #     _alias_re = re.compile(r"^" + schema_alias + r"\.([^\.]+?)$")
-            #     match = _alias_re.match(nav_type)
-            #     to_entity_name = match.group(1) if match else nav_type
-            # else:
-            #     to_entity_name = nav_type
             
             from_property = constraints[0]['from_name'] if constraints else None
             to_property = constraints[0]['to_name'] if constraints else None
@@ -543,8 +645,6 @@ class EdmxMetadata:
                 "to_property": to_property,
                 "to_entity_type": (nav_type_info.get("stripped_type") or nav_type),
                 "to_entity_full_type": nav_type,
-                "to_entity_is_collection": nav_type_info.get("is_collection"),
-                # "to_entity_type_element": nav_type_info.get("type_element") # This is not necessary. All navigation properties seem to target EntityTypes directly.
-                # "nullable": (np.get("Nullable", True) or True), # Don't think we will need this.
+                "to_entity_is_collection": nav_type_info.get("is_collection")
             }
         return navs

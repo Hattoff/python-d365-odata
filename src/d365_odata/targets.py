@@ -59,7 +59,7 @@ class FromTarget(BaseTarget):
 class EntityDefinitionsTarget(BaseTarget):
     """
     Hard-coded to allow for fetching of system data necessary for metadata construction.
-    Query the EntityMetadata entity exposed by this EntitySet.
+    Query the /EntityDefinitions endpoint.
     """
     logical_name: Optional[str] = None
     id: Optional[str] = None
@@ -94,7 +94,7 @@ class EntityDefinitionsTarget(BaseTarget):
 class EdmxTarget(BaseTarget):
     """
     Hard-coded to allow for fetching of system data necessary for metadata construction.
-    Query the $Metadata endpoint for Edmx (XML) document.
+    Query the /$Metadata endpoint for Edmx (XML) document.
     """
     @staticmethod
     def create() -> "EdmxTarget":
@@ -110,6 +110,7 @@ class EdmxTarget(BaseTarget):
 class WhoAmITarget(BaseTarget):
     """
     Hard-coded to allow for endpoint testing before metadata construction.
+    Query the /WhoAmI endpoint.
     """
     @staticmethod
     def create() -> "WhoAmITarget":
