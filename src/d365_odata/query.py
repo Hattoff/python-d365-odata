@@ -7,7 +7,7 @@ from .types import OrderByItem, QueryPart
 from .expand import ExpandItem, ExpandQuery
 from .ast import Expr, And, Or
 from .compiler import compile_expr, compile_orderby, compile_expand
-from .validator import validate_query, validate_target
+from .validator import query_validation, target_validation
 from .flatten import flatten_fields, flatten_orderby, flatten_exprs
 from .targets import Target, FromTarget, EntityDefinitionsTarget, EdmxTarget, WhoAmITarget
 
@@ -270,8 +270,8 @@ class ODataQueryBuilder:
         self._enforce_allowed_parts(self._target)
 
         if validate:
-            validate_query(self)
-            validate_target(self)
+            query_validation(self)
+            target_validation(self)
 
         parts = []
         if self._select:

@@ -26,6 +26,9 @@ class Prop(Expr):
     """Property of entity or name of an attribute"""
     name: str
 
+    def _update_name(self, val):
+        object.__setattr__(self, "name", val)
+
     # comparisons
     def __eq__(self, other: Any) -> "Eq":   # type: ignore[override]
         return Eq(self, other)
@@ -122,6 +125,10 @@ class _CoercingBinary(Expr):
         object.__setattr__(self, "left", type(self).coerce_left(left))
         object.__setattr__(self, "right", type(self).coerce_right(right))
 
+    def _rebuild(self, left: Any, right: Any):
+        object.__setattr__(self, "left", type(self).coerce_left(left))
+        object.__setattr__(self, "right", type(self).coerce_right(right))
+
 
 @dataclass(frozen=True, init=False)
 class _StrictBinary(Expr):
@@ -134,6 +141,10 @@ class _StrictBinary(Expr):
                 f"{type(self).__name__} requires Expr on both sides. "
                 f"Got left={type(left).__name__}, right={type(right).__name__}"
             )
+        object.__setattr__(self, "left", left)
+        object.__setattr__(self, "right", right)
+
+    def _rebuild(self, left: Any, right: Any):
         object.__setattr__(self, "left", left)
         object.__setattr__(self, "right", right)
 
@@ -187,7 +198,7 @@ class In_(Expr):
 
 @dataclass(frozen=True)
 class Not(Expr):
-    expr: Expr
+    inner_expr: Expr
 
 # Comparison predicates
 @dataclass(frozen=True, init=False)

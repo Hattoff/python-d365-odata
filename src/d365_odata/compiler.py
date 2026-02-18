@@ -31,7 +31,7 @@ def compile_expr(expr: Expr) -> str:
         return f"({inner})"
     
     if isinstance(expr, Not):
-        return f"(not {compile_expr(expr.expr)})"
+        return f"(not {compile_expr(expr.inner_expr)})"
 
     if isinstance(expr, Eq):
         return f"({compile_expr(expr.left)} eq {compile_expr(expr.right)})"

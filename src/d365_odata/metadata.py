@@ -92,6 +92,12 @@ class ServiceMetadata:
                 prop, actual_prop_name = _find_case_insensitive(prop_name, props)
                 if prop:
                     return prop, actual_prop_name
+                
+                if prop_type == "attributes":
+                    prop, actual_prop_name = _find_case_insensitive(prop_name, props, "api_name")
+                    if prop:
+                        return prop, actual_prop_name
+
         return None, None
         
     def get_entity(self, name: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:

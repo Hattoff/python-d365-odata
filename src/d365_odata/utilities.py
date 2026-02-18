@@ -15,7 +15,7 @@ def _normalize_guid(value: Any) -> str:
     # force lowercase
     return str(UUID(str(value)))
 
-def _find_case_insensitive(target: str, items: Iterable[str]) -> Tuple[Optional[Any], Optional[str]]:
+def _find_case_insensitive(target: str, items: Iterable[str], alternate_key: Optional[str] = None) -> Tuple[Optional[Any], Optional[str]]:
         """
         Search `items` case-insensitively and return the original (case-sensitive) match.
         Returns None if not found.
@@ -33,8 +33,11 @@ def _find_case_insensitive(target: str, items: Iterable[str]) -> Tuple[Optional[
         target_lower = target.lower()
         if isinstance(items, dict):
             for item_name, item in items.items():
-                if isinstance(item_name, str) and item_name.lower() == target_lower:
-                    return item, item_name
+                if isinstance(item_name, str):
+                    if item_name.lower() == target_lower:
+                        return item, item_name
+                    if alternate_key is not None and ((item.get(alternate_key, "") or "").lower()) == target_lower:
+                        return item, item_name
         else:
             for item in items:
                 if isinstance(item, str) and item.lower() == target_lower:
