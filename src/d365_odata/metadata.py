@@ -43,7 +43,13 @@ class ServiceMetadata:
         return self._get_entity_prop("attributes", attribute_name, entity=entity, entity_name=entity_name)
 
     def get_navigation_property(self, navigation_property_name: str, *, entity: Optional[Dict[str, Any]] = None, entity_name: Optional[str] = None) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-        return self._get_entity_prop("navigation_properties", navigation_property_name, entity=entity, entity_name=entity_name)
+        nav_prop, nav_prop_name = self._get_entity_prop("navigation_properties", navigation_property_name, entity=entity, entity_name=entity_name)
+        if not nav_prop:
+            attr, attr_name = self.get_attribute(attribute_name=navigation_property_name, entity=entity, entity_name=entity_name)
+            if attr:
+                nav_prop, nav_prop_name = self._get_entity_prop("navigation_properties", attr_name, entity=entity, entity_name=entity_name)
+        return nav_prop, nav_prop_name
+
     
     def _get_entity_prop(
             self,

@@ -34,30 +34,60 @@ class BaseTarget:
 class FromTarget(BaseTarget):
     entity_set: str
     id: Optional[Any] = None
+    focus: Optional[str] = None
+    focus_entity: Optional[str] = None
     """guid string, no quotes in URL"""
 
     @staticmethod
-    def create(entity_set: str, id: Optional[Any] = None) -> "FromTarget":
+    def create(entity_set: str, id: Optional[Any] = None, focus: Optional[str] = None, focus_entity: Optional[str] = None) -> "FromTarget":
         if id is not None and not _is_guid(id):
             raise ValueError(f"Invalid GUID for entity id: {id!r}")
-        return FromTarget(
-            validate_requires_metadata=True,
+        if focus is not None and id is None:
+            raise ValueError(f"Use of Focus required an entity id.")
+        
+        if focus is not None:
+            allowed_parts=frozenset({
+                QueryPart.SELECT
+            })
+        else:
             allowed_parts=frozenset({
                 QueryPart.SELECT, QueryPart.FILTER, QueryPart.ORDERBY,
                 QueryPart.SKIP, QueryPart.TOP, QueryPart.COUNT, QueryPart.EXPAND
-            }),
+            })
+
+        return FromTarget(
+            validate_requires_metadata=True,
+            allowed_parts=allowed_parts,
             entity_set=entity_set,
             id=id,
+            focus=focus,
+            focus_entity=focus_entity
         )
 
     def to_path(self) -> str:
         if self.id:
-            return f"/{self.entity_set}({_normalize_guid(self.id)})"
-        return f"/{self.entity_set}"
+            full_path = f"/{self.entity_set}({_normalize_guid(self.id)})"
+            if self.focus is not None:
+                full_path = f"{full_path}/{self.focus}"
+        else:
+            full_path = f"/{self.entity_set}"
+        return full_path
     
-    def _force_update_entity_set(self, val) -> None:
-        # Bit of an anti-pattern but this is for the validator to use.
+    @property
+    def target_entity(self):
+        if self.focus_entity is not None:
+            return self.focus_entity
+        else:
+            return self.entity_set
+    
+    def _update_entity_set(self, val) -> None:
         object.__setattr__(self, 'entity_set', val)
+
+    def _update_focus(self, val) -> None:
+        object.__setattr__(self, 'focus', val)
+
+    def _update_focus_entity(self, val) -> None:
+        object.__setattr__(self, 'focus_entity', val)
 
 @dataclass(frozen=True)
 class EntityDefinitionsTarget(BaseTarget):

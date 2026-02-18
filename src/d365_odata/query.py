@@ -64,7 +64,10 @@ class ODataQueryBuilder:
     def from_(
         self,
         entity_set: str = None,
-        id: Optional[Any] = None
+        *, 
+        id: Optional[Any] = None,
+        focus: Optional[str] = None,
+        focus_entity: Optional[str] = None # If using metadata don't worry about populating this.
     ) -> "ODataQueryBuilder":
         """
         #### Query Part:
@@ -75,7 +78,7 @@ class ODataQueryBuilder:
         :param id: Target a specific record by GUID.
         :type id: Optional[Any]
         """
-        self._target = FromTarget.create(entity_set=entity_set, id=id)
+        self._target = FromTarget.create(entity_set=entity_set, id=id, focus=focus, focus_entity=focus_entity)
         return self
     
     def entitydefinitions_(
@@ -271,7 +274,6 @@ class ODataQueryBuilder:
 
         if validate:
             query_validation(self)
-            target_validation(self)
 
         parts = []
         if self._select:
