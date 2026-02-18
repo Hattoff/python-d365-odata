@@ -217,7 +217,7 @@ class ODataQueryBuilder:
         return self
     
     # ------- Expand -------- #
-    def expand_(self, nav: str, query: Optional[ExpandQuery] = None) -> "ODataQueryBuilder":
+    def expand_(self, nav: str) -> "ExpandQuery":
         """
         #### Query Part:
          -Add a $expand clause.
@@ -227,8 +227,9 @@ class ODataQueryBuilder:
         #### Usage Example:
             q.expand_("primarycontactid", ExpandQuery().select_("fullname").top_(1))
         """
-        self._expand.append(ExpandItem(nav=nav, query=query))
-        return self
+        new_expand:ExpandItem = ExpandItem.create(nav=nav, parent_query=self)
+        self._expand.append(new_expand)
+        return new_expand.query
 
     @property
     def _present_parts(self) -> set[QueryPart]:

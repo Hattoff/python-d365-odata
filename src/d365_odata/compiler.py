@@ -118,7 +118,7 @@ def compile_expand(items: List[ExpandItem]) -> str:
     return ",".join(_compile_expand_item(it) for it in items)
 
 def _compile_expand_item(it: ExpandItem) -> str:
-    if it.query is None:
+    if it is None:
         return it.nav
 
     inner_parts: list[str] = []

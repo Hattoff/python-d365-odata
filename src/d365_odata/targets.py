@@ -45,9 +45,11 @@ class FromTarget(BaseTarget):
         if focus is not None and id is None:
             raise ValueError(f"Use of Focus required an entity id.")
         
-        if focus is not None:
+        if focus is not None or id is not None:
             allowed_parts=frozenset({
-                QueryPart.SELECT
+                QueryPart.SELECT , QueryPart.EXPAND
+                
+                # TODO: Allow for QueryPart.EXPAND but some major reworking needs to be done to the validator to handle it.
             })
         else:
             allowed_parts=frozenset({
