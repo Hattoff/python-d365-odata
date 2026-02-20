@@ -1,35 +1,22 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Any, Optional, List
+from typing import Optional, FrozenSet, Any, List, Generic, TypeVar, Self
 
-from .metadata import ServiceMetadata
 from .types import OrderByItem, QueryPart
-from .expand import ExpandItem, ExpandQuery
 from .ast import Expr, And, Or
-from .compiler import compile_expr, compile_orderby, compile_expand
-from .validator import query_validation, target_validation
 from .flatten import flatten_fields, flatten_orderby, flatten_exprs
-from .targets import Target, FromTarget, EntityDefinitionsTarget, EdmxTarget, WhoAmITarget
+from .targets import Target, WhoAmITarget, EdmxTarget, EntityDefinitionsTarget, FromTarget, ExpandTarget
+from .metadata import ServiceMetadata
+from .validator import query_validation, target_validation
+from .compiler import compile_expr, compile_orderby, compile_expand
 
-import logging
-logger = logging.getLogger(__name__)
+# ------- Queries -------- #
 
-# ------- Query wrapper -------- #
-@dataclass(frozen=True)
-class OData:
-    """Wrapper class for ODataQueryBuilder ensures you use the same metadata for each query by locking it."""
-    metadata: Optional[ServiceMetadata] = None
+QSelf = TypeVar("QSelf", bound="BaseQuery")
 
-    def query(self) -> "ODataQueryBuilder":
-        return ODataQueryBuilder(metadata=self.metadata, metadata_lock=True)
-
-
-# ------- Query builder -------- #
 @dataclass
-class ODataQueryBuilder:
-    _metadata: Optional[ServiceMetadata] = None
-
-    # Query options
+class BaseQuery(Generic[QSelf]):
+     # Query options
     _target: Optional[Target] = None
     _select: List[str] = field(default_factory=list)
     _filter: Optional[Expr] = None
@@ -37,85 +24,20 @@ class ODataQueryBuilder:
     _orderby: List[OrderByItem] = field(default_factory=list)
     _skip: Optional[int] = None
     _top: Optional[int] = None
-    _expand: List[ExpandItem] = field(default_factory=list)
+    _expand: List[ExpandQuery] = field(default_factory=list)
 
-    def __init__(self, metadata: Optional[ServiceMetadata] = None, metadata_lock: bool = False):
-        self._metadata = metadata
-        self._target = None
-        self._select = []
-        self._filter = None
-        self._count = None
-        self._orderby = []
-        self._skip = None
-        self._top = None
-        self._expand = []
-        self._metadata_lock = metadata_lock
-
-    # Optional way to implement the metadata while building the query.
-    def using_(self, metadata: ServiceMetadata) -> "ODataQueryBuilder":
-        """Set the metadata object to enable query validation."""
-        if self._metadata_lock:
-           logger.warning("Attempted to change the metadata on this query builder but the metadata lock prevented the change.")
-           return self 
-        self._metadata = metadata
-        return self
-
-    # ------- Target -------- #
-    def from_(
-        self,
-        entity_set: str = None,
-        *, 
-        id: Optional[Any] = None,
-        focus: Optional[str] = None,
-        focus_entity: Optional[str] = None # If using metadata don't worry about populating this.
-    ) -> "ODataQueryBuilder":
-        """
-        #### Query Part:
-         -Target a specific entity-set.
-        
-        :param entity_set: Entity's entity-set name. Optionally use the logical name (**requires** metadata).
-        :type entity_set: str
-        :param id: Target a specific record by GUID.
-        :type id: Optional[Any]
-        """
-        self._target = FromTarget.create(entity_set=entity_set, id=id, focus=focus, focus_entity=focus_entity)
-        return self
-    
-    def entitydefinitions_(
-        self,
-        entity_id: Optional[Any] = None
-    ) -> "ODataQueryBuilder":
-        """
-        #### Query Part:
-         -Target the hard-coded /EntityDefinitions enpoint.
-         -Does **NOT** support any other query parts.
-
-        :param entity_id: Target a specific entity by GUID or logical name.
-        :type entity_id: Optional[Any]
-        """
-        self._target = EntityDefinitionsTarget.create(entity_id=entity_id)
-        return self
-    
-    def edmx_(self) -> "ODataQueryBuilder":
-        """
-        #### Query Part:
-         -Target the hard-coded /$Metadata enpoint.
-         -Does **NOT** support any other query parts.
-        """
-        self._target = EdmxTarget.create()
-        return self
-    
-    def whoami_(self) -> "ODataQueryBuilder":
-        """
-        #### Query Part:
-         -Target the hard-coded /WhoAmI enpoint.
-         -Does **NOT** support any other query parts.
-        """
-        self._target = WhoAmITarget.create()
-        return self
+    # def __init__(self):
+    #     self._target = None
+    #     self._select = []
+    #     self._filter = None
+    #     self._count = None
+    #     self._orderby = []
+    #     self._skip = None
+    #     self._top = None
+    #     self._expand = []
 
     # ------- Select -------- #
-    def select_(self, *fields: str) -> "ODataQueryBuilder":
+    def select_(self, *fields: str) -> QSelf:
         """
         #### Query Part:
          -Select specific properties from an entity-set.
@@ -132,7 +54,7 @@ class ODataQueryBuilder:
         return self
 
     # ------- Criteria -------- #
-    def where_(self, *items: Any) -> "ODataQueryBuilder":
+    def where_(self, *items: Any) -> QSelf:
         """
         #### Query Part:
          -Apply a variety of Expressions to curtail the resulting records.
@@ -153,7 +75,7 @@ class ODataQueryBuilder:
         self._filter = incoming if self._filter is None else And(self._filter, incoming)
         return self
 
-    def or_where_(self, *items: Any) -> "ODataQueryBuilder":
+    def or_where_(self, *items: Any) -> QSelf:
         """
         #### Query Part:
          -Apply a variety of Expressions to curtail the resulting records.
@@ -175,7 +97,7 @@ class ODataQueryBuilder:
         return self
 
     # ------- Aggregate -------- #
-    def count_(self, enabled: bool = True) -> "ODataQueryBuilder":
+    def count_(self, enabled: bool = True) -> QSelf:
         """
         #### Query Part:
          -Get a count of records expected to be returned by the query.
@@ -184,7 +106,7 @@ class ODataQueryBuilder:
         return self
 
     # ------- Order -------- #
-    def orderby_(self, *items: Any) -> "ODataQueryBuilder":
+    def orderby_(self, *items: Any) -> QSelf:
         """
         #### Query Part:
          -Order records by a property in (asc)ending or (desc)ending order.
@@ -200,13 +122,13 @@ class ODataQueryBuilder:
         return self
 
     # ------- Misc -------- #
-    def skip_(self, n: int) -> "ODataQueryBuilder":
+    def skip_(self, n: int) -> QSelf:
         if not isinstance(n, int) or n < 0:
             raise ValueError("$skip must be a non-negative integer")
         self._skip = n
         return self
 
-    def top_(self, n: int) -> "ODataQueryBuilder":
+    def top_(self, n: int) -> QSelf:
         """
         #### Query Part:
          -Return only n-records at most.
@@ -216,21 +138,6 @@ class ODataQueryBuilder:
         self._top = n
         return self
     
-    # ------- Expand -------- #
-    def expand_(self, nav: str) -> "ExpandQuery":
-        """
-        #### Query Part:
-         -Add a $expand clause.
-         -Joins to an associated table.
-         -ExpandQueries can have their own set of query parts.
-
-        #### Usage Example:
-            q.expand_("primarycontactid", ExpandQuery().select_("fullname").top_(1))
-        """
-        new_expand:ExpandItem = ExpandItem.create(nav=nav, parent_query=self)
-        self._expand.append(new_expand)
-        return new_expand.query
-
     @property
     def _present_parts(self) -> set[QueryPart]:
         present: set[QueryPart] = set()
@@ -249,7 +156,7 @@ class ODataQueryBuilder:
         if self._expand:
             present.add(QueryPart.EXPAND)
         return present
-
+    
     def _enforce_allowed_parts(self, target: Target) -> None:
         if QueryPart.__ANY__ in target.allowed_parts:
             return
@@ -263,6 +170,9 @@ class ODataQueryBuilder:
             raise ValueError(f"{target.__class__.__name__} does not allow: {names}")
 
     def generate(self, *, validate: bool = True) -> str:
+        raise NotImplementedError()
+
+    def _compile(self, *, validate: Optional[bool] = True, metadata: Optional[ServiceMetadata] = None):
         """
         Compose the query parts into valid syntax.
 
@@ -271,10 +181,6 @@ class ODataQueryBuilder:
         :return: Return the query string.
         :rtype: str
         """
-        self._enforce_allowed_parts(self._target)
-
-        if validate:
-            query_validation(self)
 
         parts = []
         if self._select:
@@ -289,8 +195,134 @@ class ODataQueryBuilder:
             parts.append("$skip=" + str(self._skip))
         if self._top is not None:
             parts.append("$top=" + str(self._top))
+        return (("&".join(parts)) if parts else "")
+
+        
+
+
+@dataclass
+class Query(BaseQuery["Query"]):
+    _metadata: ServiceMetadata = None
+    # Initialize target
+    def from_(
+        self,
+        entity_set: str,
+        *,
+        id: Optional[Any] = None,
+        focus: Optional[str] = None,
+        focus_entity: Optional[str] = None,
+    ) -> Query:
+        self._target = FromTarget.create(
+            entity_set=entity_set, id=id, focus=focus, focus_entity=focus_entity
+        )
+        return self
+    
+    def __init__(self, metadata: Optional[ServiceMetadata] = None):
+        super().__init__()
+        self._metadata = metadata
+
+    def edmx_(self) -> Query:
+        self._target = EdmxTarget.create()
+        return self
+
+    def whoami_(self) -> Query:
+        self._target = WhoAmITarget.create()
+        return self
+    
+    # ------- Expand -------- #
+    def expand_(self, navigation_property: str) -> ExpandQuery:
+        # """
+        # #### Query Part:
+        #  -Add a $expand clause.
+        #  -Joins to an associated table.
+        #  -ExpandQueries can have their own set of query parts.
+
+        # #### Usage Example:
+        #     q.expand_("primarycontactid", ExpandQuery().select_("fullname").top_(1))
+        # """
+        # expanded_query:ExpandQuery = ExpandQuery(nav=nav, parent_query=self)
+        # self._expand.append(expanded_query)
+        # return expanded_query
+        expand = ExpandQuery(navigation_property=navigation_property, parent=self)
+        self._expand.append(expand)
+        return expand
+
+    def generate(self, *, validate: bool = True) -> str:
+        self._enforce_allowed_parts(self._target)
+
+        if validate:
+            query_validation(self, metadata=self._metadata)
+            for e in self._expand:
+                e.validate_query(metadata=self._metadata)
+
+        parts_str = self._compile(validate=validate)
+        expansions = []
         if self._expand:
-            parts.append("$expand=" + compile_expand(self._expand))
+            for e in self._expand:
+                exp_str = e._compile(validate=validate, metadata=self._metadata)
+                expansions.append(f"$expand={e._target.navigation_property}{(f"({exp_str})" if exp_str else "")}")
+        expansions_str = ((",".join(expansions)) if expansions else "")
+
+        if parts_str and expansions_str:
+            combined_parts = f"{parts_str}&{expansions_str}"
+        else:
+            combined_parts = (parts_str or expansions_str)
 
         base = self._target.to_path()
-        return base + (("?" + "&".join(parts)) if parts else "")
+        return base + (("?" + combined_parts) if combined_parts else "")
+
+
+class ExpandQuery(BaseQuery["ExpandQuery"]):
+    _target: Optional[ExpandTarget] = None
+    navigation_property: str = ""
+    parent: BaseQuery
+
+    def __init__(self, navigation_property, parent):
+        super().__init__()
+        self.navigation_property = navigation_property
+        self.parent = parent
+        self._target = ExpandTarget.create(navigation_property=navigation_property)
+
+    # ------- Expand -------- #
+    def expand_(self, navigation_property: str) -> ExpandQuery:
+        """
+        #### Query Part:
+         -Add a $expand clause.
+         -Joins to an associated table.
+         -ExpandQueries can have their own set of query parts.
+
+        #### Usage Example:
+            q.expand_("primarycontactid", ExpandQuery().select_("fullname").top_(1))
+        """
+        expand = ExpandQuery(navigation_property=navigation_property, parent=self)
+        self._expand.append(expand)
+        return expand
+
+    def generate(self, *, validate: bool = True) -> str:
+        """
+        Crawl back up the query chain and generate from the top -> down.
+        Generate from Query will call "_compile" on all child queries.
+        """
+        return self.parent.generate(validate=validate)
+
+    def _compile(self, *, validate: Optional[bool] = True, metadata: Optional[ServiceMetadata] = None):
+        parts_str = super()._compile(validate=validate, metadata=metadata)
+        expansions = []
+        if self._expand:
+            for e in self._expand:
+                exp_str = e._compile(validate=validate, metadata=metadata)
+                expansions.append(f"$expand={e._target.navigation_property}{(f"({exp_str})" if exp_str else "")}")
+        expansions_str = ((",".join(expansions)) if expansions else "")
+
+        if parts_str and expansions_str:
+            combined_parts = f"{parts_str};{expansions_str}"
+        else:
+            combined_parts = (parts_str or expansions_str)
+
+        return combined_parts
+
+    def validate_query(self, metadata: ServiceMetadata):
+        query_validation(self, metadata)
+        for e in self._expand:
+            e.validate_query(metadata)
+

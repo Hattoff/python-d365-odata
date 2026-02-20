@@ -6,18 +6,18 @@ from .types import QueryPart
 
 # ------- Targets -------- #
 
-class Target(Protocol):
-    """
-    A typed-template for any Target-like class.
-    Anything that has allowed_parts and to_path() will be classified as a Target.
-    """
-    allowed_parts: FrozenSet[QueryPart]
-    validate_requires_metadata: bool
-    def to_path(self) -> str:
-        pass
+# class Target(Protocol):
+#     """
+#     A typed-template for any Target-like class.
+#     Anything that has allowed_parts and to_path() will be classified as a Target.
+#     """
+#     allowed_parts: FrozenSet[QueryPart]
+#     validate_requires_metadata: bool
+#     def to_path(self) -> str:
+#         pass
 
 @dataclass(frozen=True)
-class BaseTarget:
+class Target:
     """
     Base class for Targets.
     Query targets are often the entry point of the query.
@@ -29,9 +29,13 @@ class BaseTarget:
 
     def to_path(self) -> str:
         raise NotImplementedError
+    
+    @property
+    def target_entity(self):
+        raise NotImplementedError
 
 @dataclass(frozen=True)
-class FromTarget(BaseTarget):
+class FromTarget(Target):
     entity_set: str
     id: Optional[Any] = None
     focus: Optional[str] = None
@@ -46,16 +50,9 @@ class FromTarget(BaseTarget):
             raise ValueError(f"Use of Focus required an entity id.")
         
         if focus is not None or id is not None:
-            allowed_parts=frozenset({
-                QueryPart.SELECT , QueryPart.EXPAND
-                
-                # TODO: Allow for QueryPart.EXPAND but some major reworking needs to be done to the validator to handle it.
-            })
+            allowed_parts=frozenset({QueryPart.SELECT, QueryPart.EXPAND})
         else:
-            allowed_parts=frozenset({
-                QueryPart.SELECT, QueryPart.FILTER, QueryPart.ORDERBY,
-                QueryPart.SKIP, QueryPart.TOP, QueryPart.COUNT, QueryPart.EXPAND
-            })
+            allowed_parts=frozenset({QueryPart.__ANY__})
 
         return FromTarget(
             validate_requires_metadata=True,
@@ -92,7 +89,41 @@ class FromTarget(BaseTarget):
         object.__setattr__(self, 'focus_entity', val)
 
 @dataclass(frozen=True)
-class EntityDefinitionsTarget(BaseTarget):
+class ExpandTarget(Target):
+    navigation_property: str
+    entity_set: str
+
+
+    @staticmethod
+    def create(navigation_property: str) -> ExpandTarget:
+        allowed_parts=frozenset({
+            QueryPart.SELECT, QueryPart.FILTER, QueryPart.ORDERBY,
+            QueryPart.SKIP, QueryPart.TOP, QueryPart.COUNT, QueryPart.EXPAND
+        })
+
+        return ExpandTarget(
+            validate_requires_metadata=True,
+            allowed_parts=allowed_parts,
+            navigation_property=navigation_property,
+            entity_set=None
+        )
+
+    def to_path(self) -> str:
+        return f"{self.navigation_property}"
+    
+    @property
+    def target_entity(self):
+        return self.entity_set
+    
+    def _update_nav_prop(self, val) -> None:
+        object.__setattr__(self, 'navigation_property', val)
+    
+    def _update_entity_set(self, val) -> None:
+        object.__setattr__(self, 'entity_set', val)
+
+
+@dataclass(frozen=True)
+class EntityDefinitionsTarget(Target):
     """
     Hard-coded to allow for fetching of system data necessary for metadata construction.
     Query the /EntityDefinitions endpoint.
@@ -125,9 +156,13 @@ class EntityDefinitionsTarget(BaseTarget):
             escaped = self.logical_name.replace("'", "''")
             return f"/EntityDefinitions(LogicalName='{escaped}')"
         return "/EntityDefinitions"
+    
+    @property
+    def target_entity(self):
+        raise RuntimeError("This target has no target_entity. It should never have been called.")
 
 @dataclass(frozen=True)
-class EdmxTarget(BaseTarget):
+class EdmxTarget(Target):
     """
     Hard-coded to allow for fetching of system data necessary for metadata construction.
     Query the /$Metadata endpoint for Edmx (XML) document.
@@ -141,9 +176,13 @@ class EdmxTarget(BaseTarget):
 
     def to_path(self) -> str:
         return "/$Metadata"
+
+    @property
+    def target_entity(self):
+        raise RuntimeError("This target has no target_entity. It should never have been called.")
     
 @dataclass(frozen=True)
-class WhoAmITarget(BaseTarget):
+class WhoAmITarget(Target):
     """
     Hard-coded to allow for endpoint testing before metadata construction.
     Query the /WhoAmI endpoint.
@@ -157,3 +196,7 @@ class WhoAmITarget(BaseTarget):
 
     def to_path(self) -> str:
         return "/WhoAmI"
+    
+    @property
+    def target_entity(self):
+        raise RuntimeError("This target has no target_entity. It should never have been called.")

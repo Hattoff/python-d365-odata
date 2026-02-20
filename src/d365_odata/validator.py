@@ -4,7 +4,7 @@ from __future__ import annotations
 from .metadata import EntityType
 from .types import OrderByItem
 from .expand import ExpandItem, ExpandQuery
-from .targets import FromTarget, EntityDefinitionsTarget, WhoAmITarget, EdmxTarget
+from .targets import FromTarget, EntityDefinitionsTarget, WhoAmITarget, EdmxTarget, Target, ExpandTarget
 from .metadata import ServiceMetadata
 from .ast import (
     Expr, Prop, Literal,
@@ -17,12 +17,13 @@ from .ast import (
 from typing import Optional, Any, Dict, List
 from .utilities import _is_guid
 
+
 import logging
 logger = logging.getLogger(__name__)
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from .query import ODataQueryBuilder
+    from .query import Query, BaseQuery
 
 class ValidationError(ValueError):
     pass
@@ -179,7 +180,7 @@ def validate_expr(expr: Expr, target_entity: str, metadata: ServiceMetadata) -> 
 
     raise TypeError(f"Unknown expression node: {type(expr)!r}")
 
-def target_validation(q: ODataQueryBuilder) -> None:
+def target_validation(q: BaseQuery, metadata: ServiceMetadata) -> None:
     t = q._target
     if t is None:
         raise ValidationError("Query has no target. Call from_(), whoami_(), etc.")
@@ -190,45 +191,65 @@ def target_validation(q: ODataQueryBuilder) -> None:
         return
 
     # Targets that require metadata
-    if q._metadata is None:
+    if metadata is None:
         raise ValidationError(f"{t.__class__.__name__} requires metadata for validation, but metadata is missing.")
-
+    
     if isinstance(t, FromTarget):
-        target_entity = t.entity_set
-        entity, entity_name = q._metadata.get_entity(target_entity)
-        if entity:
-            entity_set_name = entity.get("entity_set_name")
-            if target_entity != entity_set_name:
-                t._update_entity_set(entity_set_name)
-                logger.info(f"Changed the target entity from {target_entity} to {entity_set_name}.")
-        else:
-            raise ValidationLookupError(f"Unknown entity: {t.entity_set!r}")
-        
-        if t.focus is not None:
-            nav_prop, actual_nav_prop_name = q._metadata.get_navigation_property(t.focus, entity=entity)
-            if nav_prop:
-                focus_entity, focus_entity_name = q._metadata.get_entity(nav_prop.get("to_entity_type"))
-                if focus_entity:
-                    t._update_focus(actual_nav_prop_name)
-                    t._update_focus_entity(focus_entity_name)
-                else:
-                    focus_err_part = f"Unable to Focus on navigation property {t.focus}" + (f"({actual_nav_prop_name})" if t.focus != actual_nav_prop_name else "")
-                    raise ValidationLookupError(f"{focus_err_part} because the destination entity ({nav_prop.get("to_entity_type")}) couldn't be found in the metadata.")
+        from_target_validation(t, metadata)
+    elif isinstance(t, ExpandTarget):
+        parent_entity = q.parent._target.target_entity
+        nav_prop, nav_prop_name = metadata.get_navigation_property(navigation_property_name=t.navigation_property, entity_name=parent_entity)
+        if nav_prop:
+            entity, _ = metadata.get_entity(nav_prop.get("to_entity_type"))
+            if entity:
+                entity_set_name = entity.get("entity_set_name")
+                if t.target_entity != entity_set_name:
+                    logger.info(f"Changed the expand target entity from {t.target_entity} to {entity_set_name}.")
+                    t._update_entity_set(entity_set_name)
+                if t.navigation_property != nav_prop_name:
+                    logger.info(f"Changed the expand navigation property from {t.navigation_property} to {nav_prop_name}.")
+                    t._update_nav_prop(nav_prop_name)
             else:
-                focus_err_part =  f"Unable to Focus on navigation property {t.focus} on entity {t.entity_set}" + (f"({entity_name})" if t.entity_set != entity_name else "")
-                raise ValidationLookupError(focus_err_part)
-        return
+                raise ValidationLookupError(f"Unknown entity: {t.entity_set!r}")
+        else:
+            raise ValidationLookupError(f"Unable to lookup expand target nav prop")
+    else:
+        raise ValidationError(f"Unsupported target type for validation: {type(t).__name__}")
 
-    raise ValidationError(f"Unsupported target type for validation: {type(t).__name__}")
+def from_target_validation(t: FromTarget, metadata: ServiceMetadata):
+    target_entity = t.entity_set
+    entity, entity_name = metadata.get_entity(target_entity)
+    if entity:
+        entity_set_name = entity.get("entity_set_name")
+        if target_entity != entity_set_name:
+            t._update_entity_set(entity_set_name)
+            logger.info(f"Changed the target entity from {target_entity} to {entity_set_name}.")
+    else:
+        raise ValidationLookupError(f"Unknown entity: {t.entity_set!r}")
+    
+    if t.focus is not None:
+        nav_prop, actual_nav_prop_name = metadata.get_navigation_property(t.focus, entity=entity)
+        if nav_prop:
+            focus_entity, focus_entity_name = metadata.get_entity(nav_prop.get("to_entity_type"))
+            if focus_entity:
+                t._update_focus(actual_nav_prop_name)
+                t._update_focus_entity(focus_entity_name)
+            else:
+                focus_err_part = f"Unable to Focus on navigation property {t.focus}" + (f"({actual_nav_prop_name})" if t.focus != actual_nav_prop_name else "")
+                raise ValidationLookupError(f"{focus_err_part} because the destination entity ({nav_prop.get("to_entity_type")}) couldn't be found in the metadata.")
+        else:
+            focus_err_part =  f"Unable to Focus on navigation property {t.focus} on entity {t.entity_set}" + (f"({entity_name})" if t.entity_set != entity_name else "")
+            raise ValidationLookupError(focus_err_part)
+    return
 
-def select_validation(q: ODataQueryBuilder) -> None:
-    entity, entity_name = q._metadata.get_entity(q._target.target_entity)
+def select_validation(q: Query, metadata: ServiceMetadata) -> None:
+    entity, entity_name = metadata.get_entity(q._target.target_entity)
     if entity:
         for i, field in enumerate(q._select):
-            attribute, attribute_name = q._metadata.get_attribute(field, entity=entity)
+            attribute, attribute_name = metadata.get_attribute(field, entity=entity)
             if attribute is None:
                 select_error_part = f"Unable to find attribute {field} on entity {entity_name}" + (f"({q._target.target_entity})" if entity_name != q._target.target_entity else "")
-                if q._target.focus is not None:
+                if isinstance(q._target, FromTarget) and q._target.get("focus", None) is not None:
                     raise ValidationLookupError(f"{select_error_part}. You are using Focus, be sure your selected columns are from {entity_name} and not {q._target.entity_set}.")
                 else:    
                     raise ValidationLookupError(select_error_part)
@@ -244,13 +265,13 @@ def orderby_validation(orderby: list[OrderByItem], entity_type: EntityType) -> N
         if it.field not in entity_type.properties:
             raise ValueError(f"Unknown property in $orderby: '{it.field}' on '{entity_type.name}'")
         
-def filter_validation(q: ODataQueryBuilder) -> None:
+def filter_validation(q: Query, metadata: ServiceMetadata) -> None:
     if q._filter is not None:
         if q._target and isinstance(q._target, FromTarget):
-            validate_expr(q._filter, q._target.target_entity, q._metadata)
+            validate_expr(q._filter, q._target.target_entity, metadata)
         
 
-def query_validation(q: ODataQueryBuilder) -> None:
+def query_validation(q: Query, metadata: ServiceMetadata) -> None:
     """
     Validate query parts individually
     
@@ -260,13 +281,13 @@ def query_validation(q: ODataQueryBuilder) -> None:
     :type entity_type: EntityType
     """
     # Validate target
-    target_validation(q)
+    target_validation(q, metadata=metadata)
 
     # Validate selected columns
-    select_validation(q)
+    select_validation(q, metadata=metadata)
 
     # Validate filters (where clause)
-    filter_validation(q)
+    filter_validation(q, metadata=metadata)
 
     # Validate order by
     # for it in q._orderby:
@@ -280,39 +301,4 @@ def query_validation(q: ODataQueryBuilder) -> None:
     # Validate top
     if q._top is not None and q._top < 0:
         raise ValueError("$top must be non-negative")
-    
-
-def validate_odata(q: ODataQueryBuilder) -> None:
-    """
-    Validate query parts individually
-    
-    :param q: Query to be validated
-    :type q: ODataQueryBuilder
-    :param metadata: Metadata from service
-    :type metadata: Optional[ServiceMetadata]
-    """
-
-    target_validation(q)
-
-    # Validate select
-    # for f in q._select:
-    #     if f not in entity_type.properties:
-    #         raise ValueError(f"Unknown property in $select: '{f}' on '{entity_type.name}'")
-
-    # # Validate filter
-    # if q._filter is not None:
-    #     validate_expr(q._filter, entity_type)
-
-    # # Validate order by
-    # for it in q._orderby:
-    #     if it.field not in entity_type.properties:
-    #         raise ValueError(f"Unknown property in $orderby: '{it.field}' on '{entity_type.name}'")
-
-    # # Validate skip
-    # if q._skip is not None and q._skip < 0:
-    #     raise ValueError("$skip must be non-negative")
-    
-    # # Validate top
-    # if q._top is not None and q._top < 0:
-    #     raise ValueError("$top must be non-negative")
     

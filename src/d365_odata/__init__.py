@@ -1,4 +1,4 @@
-from .query import ODataQueryBuilder, OData
+from .query_builder import ODataQueryBuilder, OData
 from .types import OrderByItem
 from.expand import ExpandQuery
 from .metadata import ServiceMetadata, EntityType, EdmxMetadata, service_metadata_from_parsed_edmx
