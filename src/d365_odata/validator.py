@@ -180,6 +180,52 @@ def validate_expr(expr: Expr, target_entity: str, metadata: ServiceMetadata) -> 
 
     raise TypeError(f"Unknown expression node: {type(expr)!r}")
 
+def validate_from_target(q: BaseQuery, metadata: ServiceMetadata):
+    t = q._target
+    target_entity = t.target_entity
+    entity, entity_name = metadata.get_entity(target_entity)
+    if entity:
+        entity_set_name = entity.get("entity_set_name")
+        if target_entity != entity_set_name:
+            t._update_entity_set(entity_set_name)
+            logger.info(f"Changed the target entity from {target_entity} to {entity_set_name}.")
+    else:
+        raise ValidationLookupError(f"Unknown entity: {t.target_entity!r}")
+    
+    if t.focus is not None:
+        nav_prop, actual_nav_prop_name = metadata.get_navigation_property(t.focus, entity=entity)
+        if nav_prop:
+            focus_entity, focus_entity_name = metadata.get_entity(nav_prop.get("to_entity_type"))
+            if focus_entity:
+                t._update_focus(actual_nav_prop_name)
+                t._update_focus_entity(focus_entity_name)
+            else:
+                focus_err_part = f"Unable to Focus on navigation property {t.focus}" + (f"({actual_nav_prop_name})" if t.focus != actual_nav_prop_name else "")
+                raise ValidationLookupError(f"{focus_err_part} because the destination entity ({nav_prop.get("to_entity_type")}) couldn't be found in the metadata.")
+        else:
+            focus_err_part =  f"Unable to Focus on navigation property {t.focus} on entity {t.target_entity}" + (f"({entity_name})" if t.target_entity != entity_name else "")
+            raise ValidationLookupError(focus_err_part)
+    return
+
+def validate_expand_target (q: BaseQuery, metadata: ServiceMetadata):
+    t = q._target
+    parent_entity = q.parent._target.target_entity
+    nav_prop, nav_prop_name = metadata.get_navigation_property(navigation_property_name=t.navigation_property, entity_name=parent_entity)
+    if nav_prop:
+        entity, _ = metadata.get_entity(nav_prop.get("to_entity_type"))
+        if entity:
+            entity_set_name = entity.get("entity_set_name")
+            if t.target_entity != entity_set_name:
+                logger.info(f"Changed the expand target entity from {t.target_entity} to {entity_set_name}.")
+                t._update_entity_set(entity_set_name)
+            if t.navigation_property != nav_prop_name:
+                logger.info(f"Changed the expand navigation property from {t.navigation_property} to {nav_prop_name}.")
+                t._update_nav_prop(nav_prop_name)
+        else:
+            raise ValidationLookupError(f"Unknown entity: {t.target_entity!r}")
+    else:
+        raise ValidationLookupError(f"Unable to lookup expand target nav prop")
+
 def target_validation(q: BaseQuery, metadata: ServiceMetadata) -> None:
     t = q._target
     if t is None:
@@ -195,68 +241,34 @@ def target_validation(q: BaseQuery, metadata: ServiceMetadata) -> None:
         raise ValidationError(f"{t.__class__.__name__} requires metadata for validation, but metadata is missing.")
     
     if isinstance(t, FromTarget):
-        from_target_validation(t, metadata)
+        validate_from_target(q, metadata)
     elif isinstance(t, ExpandTarget):
-        parent_entity = q.parent._target.target_entity
-        nav_prop, nav_prop_name = metadata.get_navigation_property(navigation_property_name=t.navigation_property, entity_name=parent_entity)
-        if nav_prop:
-            entity, _ = metadata.get_entity(nav_prop.get("to_entity_type"))
-            if entity:
-                entity_set_name = entity.get("entity_set_name")
-                if t.target_entity != entity_set_name:
-                    logger.info(f"Changed the expand target entity from {t.target_entity} to {entity_set_name}.")
-                    t._update_entity_set(entity_set_name)
-                if t.navigation_property != nav_prop_name:
-                    logger.info(f"Changed the expand navigation property from {t.navigation_property} to {nav_prop_name}.")
-                    t._update_nav_prop(nav_prop_name)
-            else:
-                raise ValidationLookupError(f"Unknown entity: {t.entity_set!r}")
-        else:
-            raise ValidationLookupError(f"Unable to lookup expand target nav prop")
+        validate_expand_target(q, metadata)   
     else:
         raise ValidationError(f"Unsupported target type for validation: {type(t).__name__}")
-
-def from_target_validation(t: FromTarget, metadata: ServiceMetadata):
-    target_entity = t.entity_set
-    entity, entity_name = metadata.get_entity(target_entity)
-    if entity:
-        entity_set_name = entity.get("entity_set_name")
-        if target_entity != entity_set_name:
-            t._update_entity_set(entity_set_name)
-            logger.info(f"Changed the target entity from {target_entity} to {entity_set_name}.")
-    else:
-        raise ValidationLookupError(f"Unknown entity: {t.entity_set!r}")
-    
-    if t.focus is not None:
-        nav_prop, actual_nav_prop_name = metadata.get_navigation_property(t.focus, entity=entity)
-        if nav_prop:
-            focus_entity, focus_entity_name = metadata.get_entity(nav_prop.get("to_entity_type"))
-            if focus_entity:
-                t._update_focus(actual_nav_prop_name)
-                t._update_focus_entity(focus_entity_name)
-            else:
-                focus_err_part = f"Unable to Focus on navigation property {t.focus}" + (f"({actual_nav_prop_name})" if t.focus != actual_nav_prop_name else "")
-                raise ValidationLookupError(f"{focus_err_part} because the destination entity ({nav_prop.get("to_entity_type")}) couldn't be found in the metadata.")
-        else:
-            focus_err_part =  f"Unable to Focus on navigation property {t.focus} on entity {t.entity_set}" + (f"({entity_name})" if t.entity_set != entity_name else "")
-            raise ValidationLookupError(focus_err_part)
-    return
 
 def select_validation(q: Query, metadata: ServiceMetadata) -> None:
     entity, entity_name = metadata.get_entity(q._target.target_entity)
     if entity:
-        for i, field in enumerate(q._select):
-            attribute, attribute_name = metadata.get_attribute(field, entity=entity)
-            if attribute is None:
-                select_error_part = f"Unable to find attribute {field} on entity {entity_name}" + (f"({q._target.target_entity})" if entity_name != q._target.target_entity else "")
-                if isinstance(q._target, FromTarget) and q._target.get("focus", None) is not None:
-                    raise ValidationLookupError(f"{select_error_part}. You are using Focus, be sure your selected columns are from {entity_name} and not {q._target.entity_set}.")
-                else:    
-                    raise ValidationLookupError(select_error_part)
-            else:
-                actual_attr_name, attr_api_name_found = get_attribute_api_name(attribute, attribute_name)
-                if attr_api_name_found:
-                    q._select[i] = actual_attr_name
+        if "-" in q._select:
+            # With keyword "-" the query will only select the bare minimum number of columns (the primary key).
+            q._select = [entity.get("primary_key","")]
+        elif "*" in q._select:
+            # With keyword "*" the query will select all columns; by not specifying a select statement the default behavior is to pull everything, so clear the list.
+            q._select = []
+        else:
+            for i, field in enumerate(q._select):
+                attribute, attribute_name = metadata.get_attribute(field, entity=entity)
+                if attribute is None:
+                    select_error_part = f"Unable to find attribute {field} on entity {entity_name}" + (f"({q._target.target_entity})" if entity_name != q._target.target_entity else "")
+                    if isinstance(q._target, FromTarget) and q._target.get("focus", None) is not None:
+                        raise ValidationLookupError(f"{select_error_part}. You are using Focus, be sure your selected columns are from {entity_name} and not {q._target.entity_set}.")
+                    else:    
+                        raise ValidationLookupError(select_error_part)
+                else:
+                    actual_attr_name, attr_api_name_found = get_attribute_api_name(attribute, attribute_name)
+                    if attr_api_name_found:
+                        q._select[i] = actual_attr_name
     else:
         raise ValidationLookupError(f"Unable to find target entity {q._target.target_entity}")
 

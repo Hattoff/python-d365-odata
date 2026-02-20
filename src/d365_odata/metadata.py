@@ -567,8 +567,13 @@ class EdmxMetadata:
                 base_type = et.get("BaseType")
                 base_type_info = self.get_type_info(type_str=base_type, namespace=schema_namespace, alias=schema_alias)
 
+                # This is some bullshit. systemuser marks ownerid as the primary key of the entity, which is sort-of true because the user owns their own record.
+                    # The problem is that, when selecting the bare-minimum number of columns from an entity, trying to select "ownerid" from systemuser causes all columns from that entity to return.
+                    # But by selecting "systemuserid" from systemuser you get both "ownerid" and "systemuserid". So shit's fucked.
+                ## TODO: make this something you can toggle in a config file and double check the systemuserid attribute exists.
+                primary_key = "systemuserid" if entity_name == "systemuser" else (entity_keys[0] if entity_keys else None)
                 entity = {
-                    "primary_key": entity_keys[0] if entity_keys else None,
+                    "primary_key": primary_key,
                     "base_type": base_type_info.get("stripped_type"),
                     "full_base_type": base_type,
                     "base_type_element": base_type_info.get("type_element"),
