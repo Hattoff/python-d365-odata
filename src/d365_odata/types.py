@@ -17,7 +17,7 @@ class QueryPart(Enum):
     EXPAND = auto()
 
 
-@dataclass(frozen=True)
+@dataclass()
 class OrderByItem:
     field: str
     desc: bool = False

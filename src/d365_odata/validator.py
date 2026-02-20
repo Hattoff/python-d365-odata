@@ -272,10 +272,15 @@ def select_validation(q: Query, metadata: ServiceMetadata) -> None:
     else:
         raise ValidationLookupError(f"Unable to find target entity {q._target.target_entity}")
 
-def orderby_validation(orderby: list[OrderByItem], entity_type: EntityType) -> None:
+def orderby_validation(q: BaseQuery, metadata: ServiceMetadata) -> None:
+    orderby = q._orderby
     for it in orderby:
-        if it.field not in entity_type.properties:
-            raise ValueError(f"Unknown property in $orderby: '{it.field}' on '{entity_type.name}'")
+        attribute, attribute_name = metadata.get_attribute(it.field, entity_name=q._target.target_entity)
+        if attribute is None:
+            raise ValueError(f"Unknown property in $orderby: '{it.field}' on '{q._target.target_entity}'")
+        else:
+            if attribute_name != it.field:
+                it.field = attribute_name
         
 def filter_validation(q: Query, metadata: ServiceMetadata) -> None:
     if q._filter is not None:
@@ -302,9 +307,8 @@ def query_validation(q: Query, metadata: ServiceMetadata) -> None:
     filter_validation(q, metadata=metadata)
 
     # Validate order by
-    # for it in q._orderby:
-    #     if it.field not in entity_type.properties:
-    #         raise ValueError(f"Unknown property in $orderby: '{it.field}' on '{entity_type.name}'")
+    orderby_validation(q, metadata=metadata)
+
 
     # Validate skip
     if q._skip is not None and q._skip < 0:

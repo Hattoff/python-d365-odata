@@ -26,6 +26,7 @@ class Target:
     allowed_parts: FrozenSet[QueryPart]
     """allowed_parts must be overridden"""
     validate_requires_metadata: bool
+    _part_validation_error: Optional[str]
 
     def to_path(self) -> str:
         raise NotImplementedError
@@ -51,8 +52,10 @@ class FromTarget(Target):
         
         if focus is not None or id is not None:
             allowed_parts=frozenset({QueryPart.SELECT, QueryPart.EXPAND})
+            part_validation_error = "FROM only allows SELECT and EXPAND when using ID or FOCUS."
         else:
             allowed_parts=frozenset({QueryPart.__ANY__})
+            part_validation_error = ""
 
         return FromTarget(
             validate_requires_metadata=True,
@@ -60,7 +63,8 @@ class FromTarget(Target):
             entity_set=entity_set,
             id=id,
             focus=focus,
-            focus_entity=focus_entity
+            focus_entity=focus_entity,
+            _part_validation_error = part_validation_error
         )
 
     def to_path(self) -> str:
@@ -93,19 +97,16 @@ class ExpandTarget(Target):
     navigation_property: str
     entity_set: str
 
-
     @staticmethod
     def create(navigation_property: str) -> ExpandTarget:
-        allowed_parts=frozenset({
-            QueryPart.SELECT, QueryPart.FILTER, QueryPart.ORDERBY,
-            QueryPart.SKIP, QueryPart.TOP, QueryPart.COUNT, QueryPart.EXPAND
-        })
+        allowed_parts=frozenset({QueryPart.SELECT, QueryPart.FILTER, QueryPart.EXPAND})
 
         return ExpandTarget(
             validate_requires_metadata=True,
             allowed_parts=allowed_parts,
             navigation_property=navigation_property,
-            entity_set=None
+            entity_set=None,
+            _part_validation_error=None
         )
 
     def to_path(self) -> str:
@@ -147,6 +148,7 @@ class EntityDefinitionsTarget(Target):
             allowed_parts=frozenset({QueryPart.SELECT}),
             logical_name=logical_name,
             id=id,
+            _part_validation_error=None
         )
 
     def to_path(self) -> str:
@@ -171,7 +173,8 @@ class EdmxTarget(Target):
     def create() -> "EdmxTarget":
         return EdmxTarget(
             validate_requires_metadata=False,
-            allowed_parts=frozenset({QueryPart.__NONE__})
+            allowed_parts=frozenset({QueryPart.__NONE__}),
+            _part_validation_error=None
         )
 
     def to_path(self) -> str:
@@ -191,7 +194,8 @@ class WhoAmITarget(Target):
     def create() -> "WhoAmITarget":
         return WhoAmITarget(
             validate_requires_metadata=False,
-            allowed_parts=frozenset({QueryPart.__NONE__})
+            allowed_parts=frozenset({QueryPart.__NONE__}),
+            _part_validation_error=None
         )
 
     def to_path(self) -> str:

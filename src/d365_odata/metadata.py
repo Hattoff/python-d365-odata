@@ -494,7 +494,7 @@ class EdmxMetadata:
                 "namespace": schema_namespace,
                 "alias": schema_alias,
                 "entities": {}, # EntityTypes (aka entities) store raw data in the system and can be exposed to the API via EntitySets.
-                "enums": {}, # EnumTypes are system-level enumerators. They can be decoded using special calls to ([NAMESPACE].[ENUM NAME] 'enum_string') -> enum_int
+                "enums": {}, # EnumTypes are system-level enumerators. They can be decoded using special calls to ([NAMESPACE].[ENUM NAME]'enum_string') -> enum_int
                 "entity_sets": {}, # EntitySets expose entities and special navigation properties to the API. e.g. the EntityDefinitions entity-set returns 
                 "complex_types": {} # ComplexTypes are Entity-like structures which lack a key. They are often a special collection populated by a function or action. e.g. The WhoAmI function returns the complex type WhoAmIResponse.
             }

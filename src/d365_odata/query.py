@@ -12,10 +12,8 @@ from .compiler import compile_expr, compile_orderby, compile_expand
 
 # ------- Queries -------- #
 
-QSelf = TypeVar("QSelf", bound="BaseQuery")
-
 @dataclass
-class BaseQuery(Generic[QSelf]):
+class BaseQuery:
      # Query options
     _target: Optional[Target] = None
     _select: List[str] = field(default_factory=list)
@@ -26,18 +24,8 @@ class BaseQuery(Generic[QSelf]):
     _top: Optional[int] = None
     _expand: List[ExpandQuery] = field(default_factory=list)
 
-    # def __init__(self):
-    #     self._target = None
-    #     self._select = []
-    #     self._filter = None
-    #     self._count = None
-    #     self._orderby = []
-    #     self._skip = None
-    #     self._top = None
-    #     self._expand = []
-
     # ------- Select -------- #
-    def select_(self, *fields: str) -> QSelf:
+    def select_(self, *fields: str) -> Self:
         """
         #### Query Part:
          -Select specific properties from an entity-set.
@@ -54,7 +42,7 @@ class BaseQuery(Generic[QSelf]):
         return self
 
     # ------- Criteria -------- #
-    def where_(self, *items: Any) -> QSelf:
+    def where_(self, *items: Any) -> Self:
         """
         #### Query Part:
          -Apply a variety of Expressions to curtail the resulting records.
@@ -75,7 +63,7 @@ class BaseQuery(Generic[QSelf]):
         self._filter = incoming if self._filter is None else And(self._filter, incoming)
         return self
 
-    def or_where_(self, *items: Any) -> QSelf:
+    def or_where_(self, *items: Any) -> Self:
         """
         #### Query Part:
          -Apply a variety of Expressions to curtail the resulting records.
@@ -97,7 +85,7 @@ class BaseQuery(Generic[QSelf]):
         return self
 
     # ------- Aggregate -------- #
-    def count_(self, enabled: bool = True) -> QSelf:
+    def count_(self, enabled: bool = True) -> Self:
         """
         #### Query Part:
          -Get a count of records expected to be returned by the query.
@@ -106,7 +94,7 @@ class BaseQuery(Generic[QSelf]):
         return self
 
     # ------- Order -------- #
-    def orderby_(self, *items: Any) -> QSelf:
+    def orderby_(self, *items: Any) -> Self:
         """
         #### Query Part:
          -Order records by a property in (asc)ending or (desc)ending order.
@@ -122,13 +110,13 @@ class BaseQuery(Generic[QSelf]):
         return self
 
     # ------- Misc -------- #
-    def skip_(self, n: int) -> QSelf:
+    def skip_(self, n: int) -> Self:
         if not isinstance(n, int) or n < 0:
             raise ValueError("$skip must be a non-negative integer")
         self._skip = n
         return self
 
-    def top_(self, n: int) -> QSelf:
+    def top_(self, n: int) -> Self:
         """
         #### Query Part:
          -Return only n-records at most.
@@ -160,14 +148,13 @@ class BaseQuery(Generic[QSelf]):
     def _enforce_allowed_parts(self, target: Target) -> None:
         if QueryPart.__ANY__ in target.allowed_parts:
             return
-        
         if self._present_parts and QueryPart.__NONE__ in target.allowed_parts:
-            raise ValueError(f"{target.__class__.__name__} does not allow any query parts.")
+            raise ValueError(f"{target.__class__.__name__} does not allow any query parts.{f" {target._part_validation_error}" if target._part_validation_error else ""}")
         
         disallowed = self._present_parts - set(target.allowed_parts)
         if disallowed:
             names = ", ".join(sorted(p.name for p in disallowed))
-            raise ValueError(f"{target.__class__.__name__} does not allow: {names}")
+            raise ValueError(f"{target.__class__.__name__} does not allow: {names}.{f" {target._part_validation_error}" if target._part_validation_error else ""}")
 
     def generate(self, *, validate: bool = True) -> str:
         raise NotImplementedError()
@@ -197,11 +184,8 @@ class BaseQuery(Generic[QSelf]):
             parts.append("$top=" + str(self._top))
         return (("&".join(parts)) if parts else "")
 
-        
-
-
 @dataclass
-class Query(BaseQuery["Query"]):
+class Query(BaseQuery):
     _metadata: ServiceMetadata = None
     # Initialize target
     def from_(
@@ -231,18 +215,18 @@ class Query(BaseQuery["Query"]):
     
     # ------- Expand -------- #
     def expand_(self, navigation_property: str) -> ExpandQuery:
-        # """
-        # #### Query Part:
-        #  -Add a $expand clause.
-        #  -Joins to an associated table.
-        #  -ExpandQueries can have their own set of query parts.
+        """
+        #### Query Part:
+         -Add a $expand clause.
+         -Joins to an associated table.
+         -ExpandQueries can have their own set of query parts.
+         -Call .done_ to return back to the parent query, or stay in the expanded query context and expand further.
 
-        # #### Usage Example:
-        #     q.expand_("primarycontactid", ExpandQuery().select_("fullname").top_(1))
-        # """
-        # expanded_query:ExpandQuery = ExpandQuery(nav=nav, parent_query=self)
-        # self._expand.append(expanded_query)
-        # return expanded_query
+        #### Usage Example:
+            q.expand_("column1") -- Expand to new entity via the column1 navigation property
+            q.select_("columnA","columnB","columnC") -- Select from expanded entity
+            q._done() -- Return the parent query
+        """
         expand = ExpandQuery(navigation_property=navigation_property, parent=self)
         self._expand.append(expand)
         return expand
@@ -272,7 +256,7 @@ class Query(BaseQuery["Query"]):
         return base + (("?" + combined_parts) if combined_parts else "")
 
 
-class ExpandQuery(BaseQuery["ExpandQuery"]):
+class ExpandQuery(BaseQuery):
     _target: Optional[ExpandTarget] = None
     navigation_property: str = ""
     parent: BaseQuery
@@ -306,6 +290,7 @@ class ExpandQuery(BaseQuery["ExpandQuery"]):
         return self.parent.generate(validate=validate)
 
     def _compile(self, *, validate: Optional[bool] = True, metadata: Optional[ServiceMetadata] = None):
+        self._enforce_allowed_parts(self._target)
         parts_str = super()._compile(validate=validate, metadata=metadata)
         expansions = []
         if self._expand:
@@ -326,3 +311,8 @@ class ExpandQuery(BaseQuery["ExpandQuery"]):
         for e in self._expand:
             e.validate_query(metadata)
 
+    def done_(self, back_to_root: Optional[bool] = False) -> BaseQuery:
+        if back_to_root:
+            if isinstance(self.parent, ExpandQuery):
+                return self.parent.done_(back_to_root)
+        return self.parent
