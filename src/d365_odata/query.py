@@ -10,10 +10,26 @@ from .metadata import ServiceMetadata
 from .validator import query_validation, target_validation
 from .compiler import compile_expr, compile_orderby, compile_expand
 
+import logging
+logger = logging.getLogger(__name__)
+
+# ------- Query wrapper -------- #
+@dataclass(frozen=True)
+class OData:
+    """Wrapper class for ODataQueryBuilder ensures you use the same metadata for each query by locking it."""
+    metadata: Optional[ServiceMetadata] = None
+
+    def query(self) -> Query:
+        """
+        Creates a new Query using the same metadata every time this is called.
+        """
+        return Query(metadata=self.metadata, metadata_lock=True)
+
 # ------- Queries -------- #
 
 @dataclass
-class BaseQuery:
+class QueryBase:
+    
      # Query options
     _target: Optional[Target] = None
     _select: List[str] = field(default_factory=list)
@@ -119,7 +135,7 @@ class BaseQuery:
     def top_(self, n: int) -> Self:
         """
         #### Query Part:
-         -Return only n-records at most.
+         -Return at most n-records.
         """
         if not isinstance(n, int) or n < 0:
             raise ValueError("$top must be a non-negative integer")
@@ -185,8 +201,16 @@ class BaseQuery:
         return (("&".join(parts)) if parts else "")
 
 @dataclass
-class Query(BaseQuery):
+class Query(QueryBase):
     _metadata: ServiceMetadata = None
+    _metadata_lock: bool = False
+    """If True, prevents the metadata from being updated with the using_ function."""
+
+    def __init__(self, metadata: Optional[ServiceMetadata] = None, metadata_lock: Optional[bool] = False):
+        super().__init__()
+        self._metadata = metadata
+        self._metadata_lock = metadata_lock
+
     # Initialize target
     def from_(
         self,
@@ -200,10 +224,16 @@ class Query(BaseQuery):
             entity_set=entity_set, id=id, focus=focus, focus_entity=focus_entity
         )
         return self
-    
-    def __init__(self, metadata: Optional[ServiceMetadata] = None):
-        super().__init__()
+
+    # Optional way to implement the metadata while building the query.
+    def using_(self, metadata: ServiceMetadata) -> Query:
+        """Set the metadata object to enable query validation."""
+        if self._metadata_lock:
+           logger.warning("Attempted to change the metadata on this query builder but the metadata lock prevented the change.")
+           return self
         self._metadata = metadata
+        return self
+    
 
     def edmx_(self) -> Query:
         self._target = EdmxTarget.create()
@@ -256,10 +286,10 @@ class Query(BaseQuery):
         return base + (("?" + combined_parts) if combined_parts else "")
 
 
-class ExpandQuery(BaseQuery):
+class ExpandQuery(QueryBase):
     _target: Optional[ExpandTarget] = None
     navigation_property: str = ""
-    parent: BaseQuery
+    parent: QueryBase
 
     def __init__(self, navigation_property, parent):
         super().__init__()
@@ -311,7 +341,7 @@ class ExpandQuery(BaseQuery):
         for e in self._expand:
             e.validate_query(metadata)
 
-    def done_(self, back_to_root: Optional[bool] = False) -> BaseQuery:
+    def done_(self, back_to_root: Optional[bool] = False) -> QueryBase:
         if back_to_root:
             if isinstance(self.parent, ExpandQuery):
                 return self.parent.done_(back_to_root)

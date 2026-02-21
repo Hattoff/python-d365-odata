@@ -5,17 +5,6 @@ from .utilities import _normalize_guid, _is_guid
 from .types import QueryPart
 
 # ------- Targets -------- #
-
-# class Target(Protocol):
-#     """
-#     A typed-template for any Target-like class.
-#     Anything that has allowed_parts and to_path() will be classified as a Target.
-#     """
-#     allowed_parts: FrozenSet[QueryPart]
-#     validate_requires_metadata: bool
-#     def to_path(self) -> str:
-#         pass
-
 @dataclass(frozen=True)
 class Target:
     """

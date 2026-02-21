@@ -33,12 +33,3 @@ class ODataQueryBuilder:
         self._metadata = metadata
         self._metadata_lock = metadata_lock
         self.main_query = Query(metadata=metadata)
-
-    # Optional way to implement the metadata while building the query.
-    def using_(self, metadata: ServiceMetadata) -> "ODataQueryBuilder":
-        """Set the metadata object to enable query validation."""
-        if self._metadata_lock:
-           logger.warning("Attempted to change the metadata on this query builder but the metadata lock prevented the change.")
-           return self
-        self._metadata = metadata
-        return self

@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from .query import Query, BaseQuery
+    from .query import Query, QueryBase
 
 class ValidationError(ValueError):
     pass
@@ -180,7 +180,7 @@ def validate_expr(expr: Expr, target_entity: str, metadata: ServiceMetadata) -> 
 
     raise TypeError(f"Unknown expression node: {type(expr)!r}")
 
-def validate_from_target(q: BaseQuery, metadata: ServiceMetadata):
+def validate_from_target(q: QueryBase, metadata: ServiceMetadata):
     t = q._target
     target_entity = t.target_entity
     entity, entity_name = metadata.get_entity(target_entity)
@@ -207,7 +207,7 @@ def validate_from_target(q: BaseQuery, metadata: ServiceMetadata):
             raise ValidationLookupError(focus_err_part)
     return
 
-def validate_expand_target (q: BaseQuery, metadata: ServiceMetadata):
+def validate_expand_target (q: QueryBase, metadata: ServiceMetadata):
     t = q._target
     parent_entity = q.parent._target.target_entity
     nav_prop, nav_prop_name = metadata.get_navigation_property(navigation_property_name=t.navigation_property, entity_name=parent_entity)
@@ -226,7 +226,7 @@ def validate_expand_target (q: BaseQuery, metadata: ServiceMetadata):
     else:
         raise ValidationLookupError(f"Unable to lookup expand target nav prop")
 
-def target_validation(q: BaseQuery, metadata: ServiceMetadata) -> None:
+def target_validation(q: QueryBase, metadata: ServiceMetadata) -> None:
     t = q._target
     if t is None:
         raise ValidationError("Query has no target. Call from_(), whoami_(), etc.")
@@ -272,7 +272,7 @@ def select_validation(q: Query, metadata: ServiceMetadata) -> None:
     else:
         raise ValidationLookupError(f"Unable to find target entity {q._target.target_entity}")
 
-def orderby_validation(q: BaseQuery, metadata: ServiceMetadata) -> None:
+def orderby_validation(q: QueryBase, metadata: ServiceMetadata) -> None:
     orderby = q._orderby
     for it in orderby:
         attribute, attribute_name = metadata.get_attribute(it.field, entity_name=q._target.target_entity)
@@ -308,7 +308,6 @@ def query_validation(q: Query, metadata: ServiceMetadata) -> None:
 
     # Validate order by
     orderby_validation(q, metadata=metadata)
-
 
     # Validate skip
     if q._skip is not None and q._skip < 0:
