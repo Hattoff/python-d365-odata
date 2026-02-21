@@ -1,9 +1,8 @@
 
 from __future__ import annotations
-from typing import Any, Sequence, List
+from typing import Any, Sequence
 import datetime
 from .types import OrderByItem
-from .expand import ExpandItem, ExpandQuery
 from .ast import (
     And, Or, Not,
     Eq, Ne, Gt, Ge, Lt, Le,
@@ -109,34 +108,3 @@ def compile_in(node: In_) -> str:
     # default: (field eq 1) or (field eq 2) ...
     parts = [f"({left} eq {compile_expr(v)})" for v in node.options]
     return f"({' or '.join(parts)})"
-
-
-
-# ------- Compile Expand -------- #
-def compile_expand(items: List[ExpandItem]) -> str:
-    # $expand=a(...),b(...)
-    return ",".join(_compile_expand_item(it) for it in items)
-
-def _compile_expand_item(it: ExpandItem) -> str:
-    if it is None:
-        return it.nav
-
-    inner_parts: list[str] = []
-
-    if it.query._select:
-        inner_parts.append("$select=" + ",".join(it.query._select))
-    if it.query._filter is not None:
-        inner_parts.append("$filter=" + compile_expr(it.query._filter))
-    if it.query._count is not None:
-        inner_parts.append("$count=" + ("true" if it.query._count else "false"))
-    if it.query._orderby:
-        inner_parts.append("$orderby=" + compile_orderby(it.query._orderby))
-    if it.query._skip is not None:
-        inner_parts.append("$skip=" + str(it.query._skip))
-    if it.query._top is not None:
-        inner_parts.append("$top=" + str(it.query._top))
-    if it.query._expand:
-        inner_parts.append("$expand=" + compile_expand(it.query._expand))
-
-    # NOTE: inside expand parentheses, options are ';' separated per OData URL conventions
-    return f"{it.nav}(" + ";".join(inner_parts) + ")"

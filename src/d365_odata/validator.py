@@ -1,20 +1,13 @@
 
 from __future__ import annotations
-
-from .metadata import EntityType
-from .types import OrderByItem
-from .expand import ExpandItem, ExpandQuery
-from .targets import FromTarget, EntityDefinitionsTarget, WhoAmITarget, EdmxTarget, Target, ExpandTarget
+from .targets import FromTarget, ExpandTarget
 from .metadata import ServiceMetadata
 from .ast import (
     Expr, Prop, Literal,
     And, Or, Not,
-    Eq, Ne, Gt, Ge, Lt, Le,
-    Contains, StartsWith, EndsWith,
     _CoercingBinary, _StrictBinary
 )
-
-from typing import Optional, Any, Dict, List
+from typing import Any
 from .utilities import _is_guid
 
 

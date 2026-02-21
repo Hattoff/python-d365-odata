@@ -1,14 +1,13 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Optional, FrozenSet, Any, List, Generic, TypeVar, Self
-
+from typing import Optional, Any, List, Self
 from .types import OrderByItem, QueryPart
 from .ast import Expr, And, Or
 from .flatten import flatten_fields, flatten_orderby, flatten_exprs
 from .targets import Target, WhoAmITarget, EdmxTarget, EntityDefinitionsTarget, FromTarget, ExpandTarget
 from .metadata import ServiceMetadata
-from .validator import query_validation, target_validation
-from .compiler import compile_expr, compile_orderby, compile_expand
+from .validator import query_validation
+from .compiler import compile_expr, compile_orderby
 
 import logging
 logger = logging.getLogger(__name__)
@@ -47,6 +46,10 @@ class QueryBase:
          -Select specific properties from an entity-set.
          -Duplicate values will be removed.
          -Order **NOT** guaranteed
+
+        #### Special Keywords:
+         "*" selects all columns on an entity (not specifying a select_ will do the same thing)
+         "-" selects the minimum number of columns per entity; usually only one (the primary key) with a few exceptions returning two columns (systemuser)
         
         :param fields: Pass one/multiple field names or Lists/Sets/Tuples of field names. 
         :type fields: str
@@ -173,11 +176,19 @@ class QueryBase:
             raise ValueError(f"{target.__class__.__name__} does not allow: {names}.{f" {target._part_validation_error}" if target._part_validation_error else ""}")
 
     def generate(self, *, validate: bool = True) -> str:
+        """
+        Compose the query parts into valid syntax.
+
+        :param validate: Optionally choose to validate this syntax against the metadata provided.
+        :type validate: bool
+        :return: Return the query string.
+        :rtype: str
+        """
         raise NotImplementedError()
 
     def _compile(self, *, validate: Optional[bool] = True, metadata: Optional[ServiceMetadata] = None):
         """
-        Compose the query parts into valid syntax.
+        Used to recursively call on QueryBase classes to compile their query parts. 
 
         :param validate: Optionally choose to validate this syntax agains the metadata provided.
         :type validate: bool
@@ -218,29 +229,55 @@ class Query(QueryBase):
         *,
         id: Optional[Any] = None,
         focus: Optional[str] = None,
-        focus_entity: Optional[str] = None,
     ) -> Query:
+        """
+        Indicate the target entity for this query.
+
+        :param id: [Optional] Provide an ID (GUID) of a specifict record.
+        :type id: Any
+        :param focus: [Optional] Use a Navigation Property to navigate (focus) on a new entity linked to the original target. **Must provide an ID to use.**
+        :type focus: Any
+        """
         self._target = FromTarget.create(
-            entity_set=entity_set, id=id, focus=focus, focus_entity=focus_entity
+            entity_set=entity_set, id=id, focus=focus
         )
         return self
 
     # Optional way to implement the metadata while building the query.
     def using_(self, metadata: ServiceMetadata) -> Query:
-        """Set the metadata object to enable query validation."""
+        """
+        Set the metadata object to enable query validation.
+        \n**If metadata lock is set, this function won't do anything.**
+        """
         if self._metadata_lock:
-           logger.warning("Attempted to change the metadata on this query builder but the metadata lock prevented the change.")
+           logger.warning("Attempted to change the metadata on this query but the metadata lock prevented the change.")
            return self
         self._metadata = metadata
         return self
     
 
     def edmx_(self) -> Query:
+        """
+        Target the /$metadata endpoint.
+        \n**This target is hard-coded and will not respond to metadata validation.**
+        """
         self._target = EdmxTarget.create()
         return self
 
     def whoami_(self) -> Query:
+        """
+        Target the /WhoAmI endpoint.
+        \n**This target is hard-coded and will not respond to metadata validation.**
+        """
         self._target = WhoAmITarget.create()
+        return self
+    
+    def entitydefinitions_(self) -> Query:
+        """
+        Target the /EntityDefinitions endpoint.
+        \n**This target is hard-coded and will not respond to metadata validation.**
+        """
+        self._target = EntityDefinitionsTarget.create()
         return self
     
     # ------- Expand -------- #
@@ -250,7 +287,8 @@ class Query(QueryBase):
          -Add a $expand clause.
          -Joins to an associated table.
          -ExpandQueries can have their own set of query parts.
-         -Call .done_ to return back to the parent query, or stay in the expanded query context and expand further.
+         -Call .done_() to return back to the parent query, or stay in the expanded query context and expand further.
+         -Call .done_(True) to return back to the root query.
 
         #### Usage Example:
             q.expand_("column1") -- Expand to new entity via the column1 navigation property
@@ -304,19 +342,21 @@ class ExpandQuery(QueryBase):
          -Add a $expand clause.
          -Joins to an associated table.
          -ExpandQueries can have their own set of query parts.
+         -Call .done_() to return back to the parent query, or stay in the expanded query context and expand further.
+         -Call .done_(True) to return back to the root query.
 
         #### Usage Example:
-            q.expand_("primarycontactid", ExpandQuery().select_("fullname").top_(1))
+            q.expand_("column1") -- Expand to new entity via the column1 navigation property
+            q.select_("columnA","columnB","columnC") -- Select from expanded entity
+            q._done() -- Return the parent query
         """
         expand = ExpandQuery(navigation_property=navigation_property, parent=self)
         self._expand.append(expand)
         return expand
 
     def generate(self, *, validate: bool = True) -> str:
-        """
-        Crawl back up the query chain and generate from the top -> down.
-        Generate from Query will call "_compile" on all child queries.
-        """
+        # Crawl back up the query chain and generate from the top -> down.
+        # Generate from Query will call "_compile" on all child queries.
         return self.parent.generate(validate=validate)
 
     def _compile(self, *, validate: Optional[bool] = True, metadata: Optional[ServiceMetadata] = None):
@@ -342,6 +382,16 @@ class ExpandQuery(QueryBase):
             e.validate_query(metadata)
 
     def done_(self, back_to_root: Optional[bool] = False) -> QueryBase:
+        """
+        Stop configuring this ExpandQuery and return its parent. 
+        \nIf back_to_root = True return to the root Query.
+        \nUseful if you want to expand multiple columns on the same entity.
+        
+        :param back_to_root: [Optional] Provide an ID (GUID) of a specifict record.
+        :type back_to_root: bool
+        :return: Returns the parent of this ExpandQuery. Returns the root Query when back_to_root = True
+        :rtype: QueryBase
+        """
         if back_to_root:
             if isinstance(self.parent, ExpandQuery):
                 return self.parent.done_(back_to_root)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Optional, FrozenSet, Protocol, ClassVar, Mapping, Any
+from typing import Optional, FrozenSet, Any
 from .utilities import _normalize_guid, _is_guid
 from .types import QueryPart
 
@@ -33,7 +33,7 @@ class FromTarget(Target):
     """guid string, no quotes in URL"""
 
     @staticmethod
-    def create(entity_set: str, id: Optional[Any] = None, focus: Optional[str] = None, focus_entity: Optional[str] = None) -> "FromTarget":
+    def create(entity_set: str, id: Optional[Any] = None, focus: Optional[str] = None) -> "FromTarget":
         if id is not None and not _is_guid(id):
             raise ValueError(f"Invalid GUID for entity id: {id!r}")
         if focus is not None and id is None:
@@ -52,7 +52,7 @@ class FromTarget(Target):
             entity_set=entity_set,
             id=id,
             focus=focus,
-            focus_entity=focus_entity,
+            focus_entity=None,
             _part_validation_error = part_validation_error
         )
 

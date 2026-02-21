@@ -103,8 +103,23 @@ class ServiceMetadata:
                     prop, actual_prop_name = _find_case_insensitive(prop_name, props, "api_name")
                     if prop:
                         return prop, actual_prop_name
+                    else:
+                        primary_key = (entity.get("primary_key","") or "")
+                        if primary_key and prop_name.lower() == primary_key.lower():
+                            return self._make_primary_key_attribute(primary_key), primary_key
 
         return None, None
+    
+    def _make_primary_key_attribute(self, primary_key_name):
+        attr = {
+            "api_name": primary_key_name,
+            "type": "Guid",
+            "full_type": "Edm.Guid",
+            "is_collection": False,
+            "type_element": "edm"
+        }
+        return attr
+
         
     def get_entity(self, name: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         """
