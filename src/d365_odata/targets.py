@@ -29,15 +29,17 @@ class FromTarget(Target):
     entity_set: str
     id: Optional[Any] = None
     focus: Optional[str] = None
+    """Navigate directly to an entity or collection of entities via a Navigation Property. Note that .select_ will now reference fields from the Focus entity."""
+    focus_type: Optional[str] = None
+    """If any attributes on the target entity have types which inherit from the Focus attribute, target only those attributes and expand."""
     focus_entity: Optional[str] = None
-    """guid string, no quotes in URL"""
 
     @staticmethod
-    def create(entity_set: str, id: Optional[Any] = None, focus: Optional[str] = None) -> FromTarget:
-        if id is not None and not _is_guid(id):
-            raise ValueError(f"Invalid GUID for entity id: {id!r}")
+    def create(entity_set: str, id: Optional[Any] = None, focus: Optional[str] = None, focus_type: Optional[str] = None) -> FromTarget:
+        # if id is not None and not _is_guid(id):
+        #     raise ValueError(f"Invalid GUID for entity id: {id!r}")
         if focus is not None and id is None:
-            raise ValueError(f"Use of Focus required an entity id.")
+            raise ValueError(f"Use of Focus required an entity id or name.")
         
         if focus is not None or id is not None:
             allowed_parts=frozenset({QueryPart.SELECT, QueryPart.EXPAND})
@@ -52,15 +54,19 @@ class FromTarget(Target):
             entity_set=entity_set,
             id=id,
             focus=focus,
+            focus_type=focus_type,
             focus_entity=None,
             _part_validation_error = part_validation_error
         )
 
     def to_path(self) -> str:
         if self.id:
-            full_path = f"/{self.entity_set}({_normalize_guid(self.id)})"
+            if _is_guid(self.id):
+                full_path = f"/{self.entity_set}({_normalize_guid(self.id)})"
+            else:
+                full_path = f"/{self.entity_set}(LogicalName='{self.id}')"
             if self.focus is not None:
-                full_path = f"{full_path}/{self.focus}"
+                full_path = f"{full_path}/{self.focus}{(f"/{self.focus_type}" if self.focus_type is not None else "")}"
         else:
             full_path = f"/{self.entity_set}"
         return full_path
@@ -78,13 +84,20 @@ class FromTarget(Target):
     def _update_focus(self, val) -> None:
         object.__setattr__(self, 'focus', val)
 
+    def _update_focus_type(self, val) -> None:
+        object.__setattr__(self, 'focus_type', val)
+
     def _update_focus_entity(self, val) -> None:
         object.__setattr__(self, 'focus_entity', val)
+
+    def _update_id(self, val) -> None:
+        object.__setattr__(self, 'id', val)
 
 @dataclass(frozen=True)
 class ExpandTarget(Target):
     navigation_property: str
     entity_set: str
+    """Expand type """
 
     @staticmethod
     def create(navigation_property: str) -> ExpandTarget:

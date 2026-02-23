@@ -22,7 +22,25 @@ class ServiceMetadata:
     entities: Dict[str, Any]
     enums: Dict[str, Any]
     complex_types: Dict[str, Any]
-    
+
+    # Remove preceeding namespace or alias values from element names or attribute types
+    def cleanup_name(self, name: str) -> Optional[str]:
+        if not name:
+            return None
+        
+        # Sometimes an incoming name may have extra spaces or a prefixed # symbol. Remove those as needed.
+        name = name.strip()
+        name = name.removeprefix('#')
+        if self.schema_namespace and name.startswith(self.schema_namespace + "."):
+            clean_name = name.removeprefix(self.schema_namespace + ".")
+            
+            return clean_name
+        
+        if self.schema_alias and name.startswith(self.schema_alias + "."):
+            clean_name = name.removeprefix(self.schema_alias + ".")
+            return clean_name
+            
+        return name
 
     def get_attribute(self, attribute_name: str, *, entity: Optional[Dict[str, Any]] = None, entity_name: Optional[str] = None) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         return self._get_entity_prop("attributes", attribute_name, entity=entity, entity_name=entity_name)
@@ -34,7 +52,6 @@ class ServiceMetadata:
             if attr:
                 nav_prop, nav_prop_name = self._get_entity_prop("navigation_properties", attr_name, entity=entity, entity_name=entity_name)
         return nav_prop, nav_prop_name
-
     
     def _get_entity_prop(
             self,
@@ -611,12 +628,6 @@ class EdmxMetadata:
 
             metadata.append(result)
         return metadata
-    
-    def type_is_custom(self, type_str: str, alias: str, custom_types: List[str]):
-        if type_str and type_str.startswith(f"{alias}."):
-            clean_type = self.cleanup_name(name=type_str, alias=alias)
-            return (clean_type in custom_types)
-        return False
     
     # Remove preceeding namespace or alias values from element names
     def cleanup_name(self, name: str, namespace: Optional[str] = "", alias: Optional[str] = "") -> Optional[str]:

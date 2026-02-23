@@ -229,6 +229,7 @@ class Query(QueryBase):
         *,
         id: Optional[Any] = None,
         focus: Optional[str] = None,
+        focus_type: Optional[str] = None,
     ) -> Query:
         """
         Indicate the target entity for this query.
@@ -239,7 +240,7 @@ class Query(QueryBase):
         :type focus: Any
         """
         self._target = FromTarget.create(
-            entity_set=entity_set, id=id, focus=focus
+            entity_set=entity_set, id=id, focus=focus, focus_type=focus_type
         )
         return self
 

@@ -174,7 +174,7 @@ def validate_expr(expr: Expr, target_entity: str, metadata: ServiceMetadata) -> 
     raise TypeError(f"Unknown expression node: {type(expr)!r}")
 
 def validate_from_target(q: QueryBase, metadata: ServiceMetadata):
-    t = q._target
+    t:FromTarget = q._target
     target_entity = t.target_entity
     entity, entity_name = metadata.get_entity(target_entity)
     if entity:
@@ -190,10 +190,28 @@ def validate_from_target(q: QueryBase, metadata: ServiceMetadata):
     if t.focus is not None:
         nav_prop, actual_nav_prop_name = metadata.get_navigation_property(t.focus, entity=entity)
         if nav_prop:
-            focus_entity, focus_entity_name = metadata.get_entity(nav_prop.get("to_entity_type"))
+            to_entity_name = nav_prop.get("to_entity_type")
+            if t.focus_type is not None:
+                clean_focus_type = metadata.cleanup_name(clean_focus_type)
+                if clean_focus_type is not None:
+                    parent_nav_prop, actual_parent_nav_prop_name = metadata.get_navigation_property(t.focus, entity=entity)
+                    child_nav_entity, actual_child_nav_entity_name = metadata.get_entity(clean_focus_type)
+                    if child_nav_entity:
+                        child_nav_base_type = child_nav_entity.get("base_type","")
+                        if child_nav_base_type and actual_parent_nav_prop_name and child_nav_base_type.lower() == actual_parent_nav_prop_name.lower():
+                            to_entity_name = actual_child_nav_entity_name
+                            t._update_focus_type(f"{metadata.schema_namespace}.{clean_focus_type}")
+            focus_entity, focus_entity_name = metadata.get_entity(to_entity_name)
             if focus_entity:
                 t._update_focus(actual_nav_prop_name)
                 t._update_focus_entity(focus_entity_name)
+
+                ## TODO: This needs a bit more robust validation. There are properties in the EDMX file which indicate when the logical name can be used to lookup an entity
+                if t.id is not None and (not _is_guid(t.id)):
+                    id_entity, id_entity_name = metadata.get_entity(name = t.id)
+                    if id_entity:
+                        id_entity_set_name = (id_entity.get("entity_set_name") or id_entity_name)
+                        t._update_id(id_val=id_entity_set_name)
             else:
                 focus_err_part = f"Unable to Focus on navigation property {t.focus}" + (f"({actual_nav_prop_name})" if t.focus != actual_nav_prop_name else "")
                 raise ValidationLookupError(f"{focus_err_part} because the destination entity ({nav_prop.get("to_entity_type")}) couldn't be found in the metadata.")
@@ -239,17 +257,13 @@ def target_validation(q: QueryBase, metadata: ServiceMetadata) -> None:
         raise ValidationError(f"{t.__class__.__name__} requires metadata for validation, but metadata is missing.")
     
     if isinstance(t, FromTarget):
-        print("trying to validate from target")
         validate_from_target(q, metadata)
     elif isinstance(t, ExpandTarget):
-        print("trying to validate expand target")
         validate_expand_target(q, metadata)   
     else:
         raise ValidationError(f"Unsupported target type for validation: {type(t).__name__}")
 
 def select_validation(q: Query, metadata: ServiceMetadata) -> None:
-    print(f"here is my target: {q._target}")
-    print(f"here is my target_entity: {q._target.target_entity}")
     entity, entity_name = metadata.get_entity(q._target.target_entity)
     if entity:
         if "-" in q._select:
