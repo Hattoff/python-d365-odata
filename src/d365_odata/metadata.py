@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 import xml.etree.ElementTree as ET
 import json
+import copy
 from .utilities import _find_case_insensitive
 
 import logging
@@ -123,7 +124,7 @@ class ServiceMetadata:
         return attr
 
         
-    def get_entity(self, name: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    def get_entity(self, name: str, merge_inherited_properties: bool = True) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         """
         Search for an entity by name and return it.
         
@@ -132,30 +133,65 @@ class ServiceMetadata:
         :return: Entity info and list of properties
         :rtype: Dict[str, Any]
         """
+        found_entity = None
+        found_entity_name = None
+
         if entity := self.entities.get(name):
             # direct name match
             logger.debug(f"Found entity {name} by direct match.")
-            return entity, name
-        
-        if entity_name := self.entity_sets.get(name):
+            found_entity = entity
+            found_entity_name = name
+            
+        elif entity_name := self.entity_sets.get(name):
             if entity := self.entities.get(entity_name):
                 # entity_set name match
                 logger.debug(f"Found entity {name} by direct entity-set name match.")
-                return entity, entity_name
-            
-        entity_name, _ = _find_case_insensitive(name, self.entity_sets)
-        if entity_name:
-            if entity := self.entities.get(entity_name):
-                # case-insensitive entity_set name match
-                logger.debug(f"Found entity {name} by case-insensitive set-name match.")
-                return entity, entity_name
-            
-        entity, entity_name = _find_case_insensitive(name, self.entities)
-        if entity:
-            # case-insensitive entity name match
-            logger.debug(f"Found entity {name} by case-insensitive match.")
-            return entity, entity_name
+                found_entity = entity
+                found_entity_name = name
+        else:
+            entity_name, _ = _find_case_insensitive(name, self.entity_sets)
+            if entity_name:
+                if entity := self.entities.get(entity_name):
+                    # case-insensitive entity_set name match
+                    logger.debug(f"Found entity {name} by case-insensitive set-name match.")
+                    found_entity = entity
+                    found_entity_name = entity_name
+            else:
+                entity, entity_name = _find_case_insensitive(name, self.entities)
+                if entity:
+                    # case-insensitive entity name match
+                    logger.debug(f"Found entity {name} by case-insensitive match.")
+                    found_entity = entity
+                    found_entity_name = entity_name
         
+        if found_entity and found_entity_name:
+            if merge_inherited_properties and found_entity.get("base_type") is not None:
+                merged_entity = {
+                        "primary_key": found_entity.get("primary_key"),
+                        "base_type": found_entity.get("base_type"),
+                        "full_base_type": found_entity.get("full_base_type"),
+                        "base_type_element": found_entity.get("base_type_element"),
+                        "abstract": found_entity.get("abstract"),
+                        "entity_set_name": found_entity.get("entity_set_name"),
+                        "attributes": None,
+                        "navigation_properties": None
+                }
+                merged_attributes = copy.deepcopy(found_entity.get("attributes"))
+                merged_navigation_properties = copy.deepcopy(found_entity.get("navigation_properties"))
+                parent_entity, _ = self.get_entity(found_entity.get("base_type"))
+                for attr_name, attr in parent_entity.get("attributes").items():
+                    if attr_name not in merged_attributes.keys():
+                        merged_attributes[attr_name] = copy.deepcopy(attr)
+
+                for attr_name, attr in parent_entity.get("attributes").items():
+                    if attr_name not in merged_navigation_properties.keys():
+                        merged_navigation_properties[attr_name] = copy.deepcopy(attr)
+                
+                merged_entity["attributes"] = merged_attributes
+                merged_entity["navigation_properties"] = merged_navigation_properties
+                return merged_entity, found_entity_name
+            else:
+                return found_entity, found_entity_name
         return None, None
     
     def ensure_entity_set_name(self, name: str) -> Optional[str]:

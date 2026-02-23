@@ -192,15 +192,18 @@ def validate_from_target(q: QueryBase, metadata: ServiceMetadata):
         if nav_prop:
             to_entity_name = nav_prop.get("to_entity_type")
             if t.focus_type is not None:
-                clean_focus_type = metadata.cleanup_name(clean_focus_type)
+                clean_focus_type = metadata.cleanup_name(t.focus_type)
+                print(f"the clean focus type is {clean_focus_type}")
                 if clean_focus_type is not None:
-                    parent_nav_prop, actual_parent_nav_prop_name = metadata.get_navigation_property(t.focus, entity=entity)
                     child_nav_entity, actual_child_nav_entity_name = metadata.get_entity(clean_focus_type)
                     if child_nav_entity:
+                        print(f"found the child nav entity")
                         child_nav_base_type = child_nav_entity.get("base_type","")
-                        if child_nav_base_type and actual_parent_nav_prop_name and child_nav_base_type.lower() == actual_parent_nav_prop_name.lower():
+                        print(f"here is the child_nav_base_type: {child_nav_base_type}")
+                        if child_nav_base_type and to_entity_name and child_nav_base_type.lower() == to_entity_name.lower():
                             to_entity_name = actual_child_nav_entity_name
                             t._update_focus_type(f"{metadata.schema_namespace}.{clean_focus_type}")
+                            print(f"Updated the focus type to {metadata.schema_namespace}.{clean_focus_type}")
             focus_entity, focus_entity_name = metadata.get_entity(to_entity_name)
             if focus_entity:
                 t._update_focus(actual_nav_prop_name)
@@ -211,7 +214,7 @@ def validate_from_target(q: QueryBase, metadata: ServiceMetadata):
                     id_entity, id_entity_name = metadata.get_entity(name = t.id)
                     if id_entity:
                         id_entity_set_name = (id_entity.get("entity_set_name") or id_entity_name)
-                        t._update_id(id_val=id_entity_set_name)
+                        t._update_id(val=id_entity_set_name)
             else:
                 focus_err_part = f"Unable to Focus on navigation property {t.focus}" + (f"({actual_nav_prop_name})" if t.focus != actual_nav_prop_name else "")
                 raise ValidationLookupError(f"{focus_err_part} because the destination entity ({nav_prop.get("to_entity_type")}) couldn't be found in the metadata.")
