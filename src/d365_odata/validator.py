@@ -193,17 +193,13 @@ def validate_from_target(q: QueryBase, metadata: ServiceMetadata):
             to_entity_name = nav_prop.get("to_entity_type")
             if t.focus_type is not None:
                 clean_focus_type = metadata.cleanup_name(t.focus_type)
-                print(f"the clean focus type is {clean_focus_type}")
                 if clean_focus_type is not None:
                     child_nav_entity, actual_child_nav_entity_name = metadata.get_entity(clean_focus_type)
                     if child_nav_entity:
-                        print(f"found the child nav entity")
                         child_nav_base_type = child_nav_entity.get("base_type","")
-                        print(f"here is the child_nav_base_type: {child_nav_base_type}")
                         if child_nav_base_type and to_entity_name and child_nav_base_type.lower() == to_entity_name.lower():
                             to_entity_name = actual_child_nav_entity_name
                             t._update_focus_type(f"{metadata.schema_namespace}.{clean_focus_type}")
-                            print(f"Updated the focus type to {metadata.schema_namespace}.{clean_focus_type}")
             focus_entity, focus_entity_name = metadata.get_entity(to_entity_name)
             if focus_entity:
                 t._update_focus(actual_nav_prop_name)

@@ -130,6 +130,8 @@ class ServiceMetadata:
         
         :param name: Check if name is an entity name, if not it will check entity_set names; will also check case-insensitive variants.
         :type name: str
+        :param merge_inherited_properties: When true, ensure the navigation properties and attributes of parent entities are included if they aren't already.
+        :type merge_inherited_properties: bool
         :return: Entity info and list of properties
         :rtype: Dict[str, Any]
         """
@@ -688,7 +690,7 @@ class EdmxMetadata:
         
         keys = [pr.get("Name") for pr in key.findall("edm:PropertyRef", self.NS)]
         if len(keys) > 1:
-            print(f"Found more than one key for entity {entity_name} ")
+            logger.warning(f"Found more than one key for entity {entity_name} ")
         return keys
     
     def normalize_property_name(self, name: str, edm_type: str = None, force: bool = False) -> str:
@@ -788,7 +790,7 @@ class EdmxMetadata:
                 })
 
             if len(constraints) > 1:
-                print(f"Found more than one constraint for {entity_name} on property {nav_name}")
+                logger.warning(f"Found more than one constraint for {entity_name} on property {nav_name}")
             
             nav_type = np.get("Type")
             nav_type_info = self.get_type_info(type_str=nav_type, namespace=namespace, alias=alias)
