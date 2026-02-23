@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 # ------- Query wrapper -------- #
 @dataclass(frozen=True)
-class OData:
+class D365OData:
     """Wrapper class for ODataQueryBuilder ensures you use the same metadata for each query by locking it."""
     metadata: Optional[ServiceMetadata] = None
 

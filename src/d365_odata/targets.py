@@ -33,7 +33,7 @@ class FromTarget(Target):
     """guid string, no quotes in URL"""
 
     @staticmethod
-    def create(entity_set: str, id: Optional[Any] = None, focus: Optional[str] = None) -> "FromTarget":
+    def create(entity_set: str, id: Optional[Any] = None, focus: Optional[str] = None) -> FromTarget:
         if id is not None and not _is_guid(id):
             raise ValueError(f"Invalid GUID for entity id: {id!r}")
         if focus is not None and id is None:
@@ -123,7 +123,7 @@ class EntityDefinitionsTarget(Target):
     """guid string, no quotes in URL"""
 
     @staticmethod
-    def create(entity_id: Optional[str] = None) -> "EntityDefinitionsTarget":
+    def create(entity_id: Optional[str] = None) -> EntityDefinitionsTarget:
         logical_name = None
         id = None
         if entity_id:
@@ -180,7 +180,7 @@ class WhoAmITarget(Target):
     Query the /WhoAmI endpoint.
     """
     @staticmethod
-    def create() -> "WhoAmITarget":
+    def create() -> WhoAmITarget:
         return WhoAmITarget(
             validate_requires_metadata=False,
             allowed_parts=frozenset({QueryPart.__NONE__}),

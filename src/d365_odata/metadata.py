@@ -12,11 +12,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 # ------- Metadata Classes -------- #
-@dataclass(frozen=True)
-class EntityType:
-    name: str
-    properties: Dict[str, str] 
-    """properties: edm type e.g. "Edm.String", "Edm.Int32"""
 
 @dataclass(frozen=True)
 class ServiceMetadata:
@@ -24,19 +19,9 @@ class ServiceMetadata:
     schema_alias: str
     entity_sets: Dict[str, str]
     """maps entity sets to entities"""
-    entity_types: Dict[str, EntityType]
-    """maps entities to EntityType objects"""
     entities: Dict[str, Any]
     enums: Dict[str, Any]
     complex_types: Dict[str, Any]
-
-    def entity_type_for_set(self, entity_set: str) -> EntityType:
-        if entity_set not in self.entity_sets:
-            raise KeyError(f"Unknown entity set: {entity_set}")
-        et_name = self.entity_sets[entity_set]
-        if et_name not in self.entity_types:
-            raise KeyError(f"Entity type not found for set '{entity_set}': {et_name}")
-        return self.entity_types[et_name]
     
 
     def get_attribute(self, attribute_name: str, *, entity: Optional[Dict[str, Any]] = None, entity_name: Optional[str] = None) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
@@ -132,22 +117,26 @@ class ServiceMetadata:
         """
         if entity := self.entities.get(name):
             # direct name match
+            logger.debug(f"Found entity {name} by direct match.")
             return entity, name
         
         if entity_name := self.entity_sets.get(name):
             if entity := self.entities.get(entity_name):
                 # entity_set name match
+                logger.debug(f"Found entity {name} by direct entity-set name match.")
                 return entity, entity_name
             
         entity_name, _ = _find_case_insensitive(name, self.entity_sets)
         if entity_name:
             if entity := self.entities.get(entity_name):
                 # case-insensitive entity_set name match
+                logger.debug(f"Found entity {name} by case-insensitive set-name match.")
                 return entity, entity_name
             
         entity, entity_name = _find_case_insensitive(name, self.entities)
         if entity:
             # case-insensitive entity name match
+            logger.debug(f"Found entity {name} by case-insensitive match.")
             return entity, entity_name
         
         return None, None
@@ -262,7 +251,6 @@ def service_metadata_from_parsed_edmx(parsed: list[dict]) -> ServiceMetadata:
     schema = parsed[0]
 
     entity_sets = {}
-    entity_types = {}
 
     # entity_sets: from entities[*].entity_set_name
     for ename, e in schema["entities"].items():
@@ -270,13 +258,11 @@ def service_metadata_from_parsed_edmx(parsed: list[dict]) -> ServiceMetadata:
             entity_sets[e["entity_set_name"]] = ename
 
         props = {pname: pinfo["type"] for pname, pinfo in e["attributes"].items()}
-        entity_types[ename] = EntityType(name=ename, properties=props)
 
     return ServiceMetadata(
         schema_namespace=schema["namespace"],
         schema_alias=schema["alias"],
         entity_sets=entity_sets,
-        entity_types=entity_types,
         entities=schema["entities"],
         enums=schema["enums"],
         complex_types=schema["complex_types"]

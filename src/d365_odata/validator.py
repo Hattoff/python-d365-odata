@@ -179,6 +179,8 @@ def validate_from_target(q: QueryBase, metadata: ServiceMetadata):
     entity, entity_name = metadata.get_entity(target_entity)
     if entity:
         entity_set_name = entity.get("entity_set_name")
+        if entity_set_name is None:
+            raise ValidationLookupError(f"Unable to find the entity set name for {(target_entity)}{(f" ({entity_name})" if entity_name != target_entity else "")}.")
         if target_entity != entity_set_name:
             t._update_entity_set(entity_set_name)
             logger.info(f"Changed the target entity from {target_entity} to {entity_set_name}.")
@@ -205,9 +207,12 @@ def validate_expand_target (q: QueryBase, metadata: ServiceMetadata):
     parent_entity = q.parent._target.target_entity
     nav_prop, nav_prop_name = metadata.get_navigation_property(navigation_property_name=t.navigation_property, entity_name=parent_entity)
     if nav_prop:
-        entity, _ = metadata.get_entity(nav_prop.get("to_entity_type"))
+        to_entity_name = nav_prop.get("to_entity_type")
+        if to_entity_name is None:
+            raise ValidationLookupError(f"Navigation Property {nav_prop_name} has no target entity.")
+        entity, _ = metadata.get_entity(to_entity_name)
         if entity:
-            entity_set_name = entity.get("entity_set_name")
+            entity_set_name = (entity.get("entity_set_name") or to_entity_name)
             if t.target_entity != entity_set_name:
                 logger.info(f"Changed the expand target entity from {t.target_entity} to {entity_set_name}.")
                 t._update_entity_set(entity_set_name)
@@ -234,13 +239,17 @@ def target_validation(q: QueryBase, metadata: ServiceMetadata) -> None:
         raise ValidationError(f"{t.__class__.__name__} requires metadata for validation, but metadata is missing.")
     
     if isinstance(t, FromTarget):
+        print("trying to validate from target")
         validate_from_target(q, metadata)
     elif isinstance(t, ExpandTarget):
+        print("trying to validate expand target")
         validate_expand_target(q, metadata)   
     else:
         raise ValidationError(f"Unsupported target type for validation: {type(t).__name__}")
 
 def select_validation(q: Query, metadata: ServiceMetadata) -> None:
+    print(f"here is my target: {q._target}")
+    print(f"here is my target_entity: {q._target.target_entity}")
     entity, entity_name = metadata.get_entity(q._target.target_entity)
     if entity:
         if "-" in q._select:
@@ -254,7 +263,7 @@ def select_validation(q: Query, metadata: ServiceMetadata) -> None:
                 attribute, attribute_name = metadata.get_attribute(field, entity=entity)
                 if attribute is None:
                     select_error_part = f"Unable to find attribute {field} on entity {entity_name}" + (f"({q._target.target_entity})" if entity_name != q._target.target_entity else "")
-                    if isinstance(q._target, FromTarget) and q._target.get("focus", None) is not None:
+                    if isinstance(q._target, FromTarget) and q._target.focus is not None:
                         raise ValidationLookupError(f"{select_error_part}. You are using Focus, be sure your selected columns are from {entity_name} and not {q._target.entity_set}.")
                     else:    
                         raise ValidationLookupError(select_error_part)

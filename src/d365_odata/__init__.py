@@ -1,6 +1,6 @@
-from .query import Query, OData
+from .query import Query, D365OData
 from .types import OrderByItem
-from .metadata import ServiceMetadata, EntityType, EdmxMetadata, service_metadata_from_parsed_edmx
+from .metadata import ServiceMetadata, EdmxMetadata, service_metadata_from_parsed_edmx
 from .ast import (
     Prop, Literal,
     And, Or, Not,
@@ -11,7 +11,7 @@ from .ast import (
 
 __all__ = [
             "ODataQueryBuilder", 
-            "OData",
+            "D365OData",
             "Query",
             "Prop",
             "Literal",
@@ -32,7 +32,6 @@ __all__ = [
             "L",
             "OrderByItem",
             "ServiceMetadata",
-            "EntityType",
             "EdmxMetadata",
             "service_metadata_from_parsed_edmx"
         ]
