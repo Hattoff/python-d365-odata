@@ -169,7 +169,7 @@ class EntityDefinitionsTarget(Target):
 class EdmxTarget(Target):
     """
     Hard-coded to allow for fetching of system data necessary for metadata construction.
-    Query the /$Metadata endpoint for Edmx (XML) document.
+    Query the /$metadata endpoint for Edmx (XML) document.
     """
     @staticmethod
     def create() -> "EdmxTarget":
@@ -180,7 +180,7 @@ class EdmxTarget(Target):
         )
 
     def to_path(self) -> str:
-        return "/$Metadata"
+        return "/$metadata"
 
     @property
     def target_entity(self):

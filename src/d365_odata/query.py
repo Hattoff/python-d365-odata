@@ -309,12 +309,13 @@ class Query(QueryBase):
                 e.validate_query(metadata=self._metadata)
 
         parts_str = self._compile(validate=validate)
+        expansions_str = None
         expansions = []
         if self._expand:
             for e in self._expand:
                 exp_str = e._compile(validate=validate, metadata=self._metadata)
                 expansions.append(f"{e._target.navigation_property}{(f"({exp_str})" if exp_str else "")}")
-        expansions_str = "$expand=" + ((",".join(expansions)) if expansions else "")
+            expansions_str = "$expand=" + ((",".join(expansions)) if expansions else "")
 
         if parts_str and expansions_str:
             combined_parts = f"{parts_str}&{expansions_str}"
