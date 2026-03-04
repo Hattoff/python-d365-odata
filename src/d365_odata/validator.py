@@ -209,7 +209,12 @@ def validate_from_target(q: QueryBase, metadata: ServiceMetadata):
                 if t.id is not None and (not _is_guid(t.id)):
                     id_entity, id_entity_name = metadata.get_entity(name = t.id)
                     if id_entity:
-                        id_entity_set_name = (id_entity.get("entity_set_name") or id_entity_name)
+                        if t.entity_set and t.entity_set.lower() == "entitydefinitions":
+                            # For EntityDefinition targets, use logical name instead of entity set name
+                            ## TODO: This hardcoded work-around needs to be fixed. Need to implement alternate-key lookup metadata validation.
+                            id_entity_set_name = (id_entity.get("logical_name") or id_entity_name)
+                        else:
+                            id_entity_set_name = (id_entity.get("entity_set_name") or id_entity_name)
                         t._update_id(val=id_entity_set_name)
             else:
                 focus_err_part = f"Unable to Focus on navigation property {t.focus}" + (f"({actual_nav_prop_name})" if t.focus != actual_nav_prop_name else "")

@@ -8,6 +8,7 @@ from .targets import Target, WhoAmITarget, EdmxTarget, EntityDefinitionsTarget, 
 from .metadata import ServiceMetadata
 from .validator import query_validation
 from .compiler import compile_expr, compile_orderby
+from .logging_config import configure_logging
 
 import logging
 logger = logging.getLogger(__name__)
@@ -17,11 +18,13 @@ logger = logging.getLogger(__name__)
 class D365OData:
     """Wrapper class for ODataQueryBuilder ensures you use the same metadata for each query by locking it."""
     metadata: Optional[ServiceMetadata] = None
+    _log_level: Optional[Any] = "info"
 
     def query(self) -> Query:
         """
         Creates a new Query using the same metadata every time this is called.
         """
+        configure_logging(self._log_level)
         return Query(metadata=self.metadata, metadata_lock=True)
 
 # ------- Queries -------- #
@@ -29,7 +32,7 @@ class D365OData:
 @dataclass
 class QueryBase:
     
-     # Query options
+    # Query options
     _target: Optional[Target] = None
     _select: List[str] = field(default_factory=list)
     _filter: Optional[Expr] = None
